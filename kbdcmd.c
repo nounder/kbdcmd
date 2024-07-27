@@ -1,31 +1,36 @@
-#include <CoreFoundation/CoreFoundation.h>
 #include <ApplicationServices/ApplicationServices.h>
 #include <Carbon/Carbon.h>
+#include <CoreFoundation/CoreFoundation.h>
 
 void checkAccessibilityPermissions() {
     if (!AXIsProcessTrusted()) {
-        printf("Error: This application doesn't have the required accessibility permissions.\n");
-        printf("Please grant accessibility permissions to Terminal (or your development environment) in:\n");
-        printf("System Preferences > Security & Privacy > Privacy > Accessibility\n");
+        printf(
+            "Error: This application doesn't have the required accessibility "
+            "permissions.\n");
+        printf("Please grant accessibility permissions to Terminal (or your "
+               "development environment) in:\n");
+        printf("System Preferences > Security & Privacy > Privacy > "
+               "Accessibility\n");
         exit(1);
     }
 }
 
 void simulateKeyPress(CGKeyCode keyCode, bool commandKey) {
-    CGEventSourceRef source = CGEventSourceCreate(kCGEventSourceStateHIDSystemState);
-    
+    CGEventSourceRef source =
+        CGEventSourceCreate(kCGEventSourceStateHIDSystemState);
+
     CGEventRef keyDown = CGEventCreateKeyboardEvent(source, keyCode, true);
     CGEventRef keyUp = CGEventCreateKeyboardEvent(source, keyCode, false);
-    
+
     if (commandKey) {
         CGEventSetFlags(keyDown, kCGEventFlagMaskCommand);
         CGEventSetFlags(keyUp, kCGEventFlagMaskCommand);
     }
-    
+
     CGEventPost(kCGHIDEventTap, keyDown);
-    usleep(1000);  // Small delay to ensure the event is processed
+    usleep(1000); // Small delay to ensure the event is processed
     CGEventPost(kCGHIDEventTap, keyUp);
-    
+
     CFRelease(keyDown);
     CFRelease(keyUp);
     CFRelease(source);
@@ -36,22 +41,25 @@ void cycle_windows(pid_t pid) {
     printf("Simulated Cmd + ` key press to cycle windows\n");
 }
 
-
 pid_t get_focused_app_pid() {
     pid_t focusedPID = 0;
     ProcessSerialNumber psn = {0, kNoProcess};
     OSErr err = GetFrontProcess(&psn);
-    
+
     if (err == noErr) {
         err = GetProcessPID(&psn, &focusedPID);
         if (err == noErr) {
             return focusedPID;
         }
     }
-    
-    return 0; // Return 0 if we failed to get the PID
+
+    // Return 0 if we failed to get the PID
+    return 0;
 }
 
+/**
+ * Create new window for application with the given PID
+ */
 void create_new_window(pid_t pid) {
     AXUIElementRef app = AXUIElementCreateApplication(pid);
     if (app == NULL) {
@@ -60,7 +68,8 @@ void create_new_window(pid_t pid) {
     }
 
     AXUIElementRef button = NULL;
-    AXError result = AXUIElementCopyAttributeValue(app, kAXMenuBarAttribute, (CFTypeRef *)&button);
+    AXError result = AXUIElementCopyAttributeValue(app, kAXMenuBarAttribute,
+                                                   (CFTypeRef *)&button);
     if (result != kAXErrorSuccess) {
         printf("Failed to get menu bar. AXError: %d\n", result);
         CFRelease(app);
@@ -79,11 +88,13 @@ void create_new_window(pid_t pid) {
     CFRelease(app);
 }
 
-void open_or_focus_app(const char* appName) {
+void open_or_focus_app(const char *appName) {
     checkAccessibilityPermissions();
 
-    CFStringRef appNameStr = CFStringCreateWithCString(NULL, appName, kCFStringEncodingUTF8);
-    CFURLRef appURL = CFURLCreateWithFileSystemPath(NULL, appNameStr, kCFURLPOSIXPathStyle, true);
+    CFStringRef appNameStr =
+        CFStringCreateWithCString(NULL, appName, kCFStringEncodingUTF8);
+    CFURLRef appURL = CFURLCreateWithFileSystemPath(NULL, appNameStr,
+                                                    kCFURLPOSIXPathStyle, true);
 
     LSLaunchURLSpec launchSpec = {0};
     launchSpec.appURL = appURL;
@@ -102,7 +113,8 @@ void open_or_focus_app(const char* appName) {
     while (GetNextProcess(&psn) == noErr) {
         CFStringRef processName;
         if (CopyProcessName(&psn, &processName) == noErr) {
-            if (CFStringCompare(processName, appNameStr, 0) == kCFCompareEqualTo) {
+            if (CFStringCompare(processName, appNameStr, 0) ==
+                kCFCompareEqualTo) {
                 GetProcessPID(&psn, &targetPID);
                 appFound = true;
                 CFRelease(processName);
@@ -112,7 +124,8 @@ void open_or_focus_app(const char* appName) {
         }
     }
 
-    printf("DEBUG: App found: %s, PID: %d\n", appFound ? "Yes" : "No", (int)targetPID);
+    printf("DEBUG: App found: %s, PID: %d\n", appFound ? "Yes" : "No",
+           (int)targetPID);
 
     if (appFound) {
         pid_t frontPID = get_focused_app_pid();
@@ -121,7 +134,8 @@ void open_or_focus_app(const char* appName) {
         AXUIElementRef app = AXUIElementCreateApplication(targetPID);
         if (app != NULL) {
             CFArrayRef windows;
-            AXError result = AXUIElementCopyAttributeValue(app, kAXWindowsAttribute, (CFTypeRef *)&windows);
+            AXError result = AXUIElementCopyAttributeValue(
+                app, kAXWindowsAttribute, (CFTypeRef *)&windows);
             if (result == kAXErrorSuccess) {
                 CFIndex windowCount = CFArrayGetCount(windows);
                 printf("DEBUG: Window count: %ld\n", windowCount);
@@ -131,7 +145,8 @@ void open_or_focus_app(const char* appName) {
                     create_new_window(targetPID);
                 } else if (frontPID != targetPID) {
                     printf("DEBUG: Bringing app to front\n");
-                    SetFrontProcessWithOptions(&psn, kSetFrontProcessFrontWindowOnly);
+                    SetFrontProcessWithOptions(&psn,
+                                               kSetFrontProcessFrontWindowOnly);
                 } else {
                     printf("DEBUG: Cycling windows\n");
                     cycle_windows(targetPID);
@@ -151,29 +166,25 @@ void open_or_focus_app(const char* appName) {
     CFRelease(appURL);
 }
 
-
-int main(int argc, const char * argv[]) {
+int main(int argc, const char *argv[]) {
     if (argc > 1) {
         if (strcmp(argv[1], "open_or_focus") == 0 && argc > 2) {
             open_or_focus_app(argv[2]);
-        }
-        else if (strcmp(argv[1], "get_focused_pid") == 0) {
+        } else if (strcmp(argv[1], "get_focused_pid") == 0) {
             pid_t focusedPID = get_focused_app_pid();
             if (focusedPID != 0) {
                 printf("Focused app PID: %d\n", focusedPID);
             } else {
                 printf("Failed to get focused app PID.\n");
             }
-        }
-        else if (strcmp(argv[1], "cycle_windows") == 0) {
+        } else if (strcmp(argv[1], "cycle_windows") == 0) {
             pid_t focusedPID = get_focused_app_pid();
             if (focusedPID != 0) {
                 cycle_windows(focusedPID);
             } else {
                 printf("Failed to get focused app PID.\n");
             }
-        }
-        else {
+        } else {
             printf("Invalid function or missing arguments.");
         }
     } else {
@@ -181,4 +192,3 @@ int main(int argc, const char * argv[]) {
     }
     return 0;
 }
-
