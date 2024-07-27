@@ -24,17 +24,15 @@ void CheckAccessibilityPermissions() {
 /**
  * Simulate a key press.
  */
-void SimulateKeyPress(CGKeyCode keyCode, bool commandKey) {
+void SimulateKeyPress(CGKeyCode keyCode, CGEventFlags flags) {
     CGEventSourceRef source =
         CGEventSourceCreate(kCGEventSourceStateHIDSystemState);
 
     CGEventRef keyDown = CGEventCreateKeyboardEvent(source, keyCode, true);
     CGEventRef keyUp = CGEventCreateKeyboardEvent(source, keyCode, false);
 
-    if (commandKey) {
-        CGEventSetFlags(keyDown, kCGEventFlagMaskCommand);
-        CGEventSetFlags(keyUp, kCGEventFlagMaskCommand);
-    }
+    CGEventSetFlags(keyDown, flags);
+    CGEventSetFlags(keyUp, flags);
 
     CGEventPost(kCGHIDEventTap, keyDown);
     usleep(1000); // Small delay to ensure the event is processed
@@ -50,7 +48,7 @@ void SimulateKeyPress(CGKeyCode keyCode, bool commandKey) {
  * This is equivalent to Cmd + ` key press on default macOS configuration.
  */
 void CycleAppWindows() {
-    SimulateKeyPress(kVK_ANSI_Grave, true);
+    SimulateKeyPress(kVK_ANSI_Grave, kCGEventFlagMaskCommand);
     printf("Simulated Cmd + ` key press to cycle windows\n");
 }
 
