@@ -103,6 +103,31 @@ void CreateNewWindow(pid_t pid) {
 }
 
 /**
+ * Switch to a specific desktop using keyboard shortcuts.
+ * @param desktopNumber The number of the desktop to switch to (1-based index).
+ * @return 0 if successful, -1 if failed.
+ */
+int SwitchToDesktop(int desktopNumber) {
+    if (desktopNumber < 1 || desktopNumber > 9) {
+        printf("Error: Invalid desktop number. Must be between 1 and 9.\n");
+        return -1;
+    }
+
+    // Simulate Control + Option + Command + Up Arrow to enter Mission Control
+    SimulateKeyPress(kVK_UpArrow, kCGEventFlagMaskControl);
+
+    // Wait for Mission Control to open
+    usleep(100000);
+
+    // Simulate pressing the number key for the desired desktop
+    CGKeyCode desktopKeyCode = kVK_ANSI_1 + (desktopNumber - 1);
+    SimulateKeyPress(desktopKeyCode, kCGEventFlagMaskControl);
+
+    printf("Switched to desktop %d\n", desktopNumber);
+    return 0;
+}
+
+/**
  * Open or focus the application with the given name.
  * If the application is already open, it will be brought to the front.
  * Otherwise, it will be started.
@@ -232,6 +257,18 @@ void cmd_open_cycle(const char *argv[]) {
     CycleAppWindows();
 }
 
+/**
+ * Command function to switch to a specific desktop.
+ */
+void cmd_switch_desktop(const char *argv[]) {
+    if (argv[2] == NULL) {
+        printf("Error: Please specify a desktop number\n");
+        return;
+    }
+
+    int desktopNumber = atoi(argv[2]);
+    SwitchToDesktop(desktopNumber);
+}
 struct Command {
     const char *name;
     void (*function)(const char **);
@@ -241,6 +278,7 @@ struct Command commands[] = {
     {"open", cmd_open},
     {"cycle", cmd_cycle_windows},
     {"open-cycle", cmd_open_cycle},
+    {"switch-desktop", cmd_switch_desktop},
     {NULL, NULL} // mark the end of the array
 };
 
