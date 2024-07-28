@@ -146,6 +146,7 @@ func cmdSwitchDesktop(_ desktopNumber: String) {
 }
 
 func cmdDameon() {
+    puts("kbdcmd daemon started")
     KeyListener.shared.start()
 }
 
