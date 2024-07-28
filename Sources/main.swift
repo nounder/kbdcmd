@@ -1,10 +1,6 @@
 import Cocoa
 import ApplicationServices
 
-func handleTimeoutAlarm() {
-    print("Execution timeout. Exiting...")
-    exit(1)
-}
 func openSystemPreferencesToAccessibility() {
     let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!
     NSWorkspace.shared.open(url)
@@ -149,12 +145,18 @@ func cmdSwitchDesktop(_ desktopNumber: String) {
     _ = switchToDesktop(number: number)
 }
 
+func cmdDameon() {
+    KeyListener.shared.start()
+}
+
+
 func executeCommand(_ args: [String]) -> Int {
     let commands: [String: ([String]) -> Void] = [
         "open": { cmdOpen($0[2]) },
         "cycle": { _ in cmdCycleWindows() },
         "open-cycle": { cmdOpenCycle($0[2]) },
-        "switch-desktop": { cmdSwitchDesktop($0[2]) }
+        "switch-desktop": { cmdSwitchDesktop($0[2]) },
+        "daemon": { _ in cmdDameon() }
     ]
     
     guard args.count > 1, let command = commands[args[1]] else {
@@ -166,9 +168,6 @@ func executeCommand(_ args: [String]) -> Int {
     command(args)
     return 0
 }
-
-signal(SIGALRM, { _ in handleTimeoutAlarm() })
-alarm(1)
 
 let args = CommandLine.arguments
 exit(Int32(executeCommand(args)))
