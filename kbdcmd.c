@@ -4,6 +4,12 @@
 #include <stdio.h>
 #include <unistd.h>
 
+void OpenSystemPreferencesToAccessibility() {
+    const char *command = "open "
+                          "'x-apple.systempreferences:com.apple.preference."
+                          "security?Privacy_Accessibility'";
+    system(command);
+}
 /**
  * Check if the application has the required accessibility permissions.
  * If not, quit.
@@ -17,6 +23,7 @@ void CheckAccessibilityPermissions() {
                "development environment) in:\n");
         printf("System Preferences > Security & Privacy > Privacy > "
                "Accessibility\n");
+        OpenSystemPreferencesToAccessibility();
         exit(1);
     }
 }
