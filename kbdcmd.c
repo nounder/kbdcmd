@@ -6,6 +6,11 @@
 #include <stdio.h>
 #include <unistd.h>
 
+void HandleTimeoutAlarm(int sig) {
+    printf("Execution timeout. Exiting...\n");
+    exit(1);
+}
+
 void OpenSystemPreferencesToAccessibility() {
     const char *command = "open "
                           "'x-apple.systempreferences:com.apple.preference."
@@ -292,6 +297,9 @@ struct Command commands[] = {
 };
 
 int main(int argc, const char *argv[]) {
+    // Set tiemout alter to make sure program will exit after 1s
+    signal(SIGALRM, HandleTimeoutAlarm);
+    alarm(1);
     if (argc > 1) {
         for (struct Command *cmd = commands; cmd->name != NULL; cmd++) {
             if (strcmp(argv[1], cmd->name) == 0) {
