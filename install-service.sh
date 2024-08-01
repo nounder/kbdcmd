@@ -9,4 +9,4 @@ chmod 644 $DST_DIR/$SERVICE_FILE
 
 launchctl load $DST_DIR/$SERVICE_FILE
 
-launchctl start
+launchctl start org.libred.kbdcmd.plist
