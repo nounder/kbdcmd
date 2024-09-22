@@ -70,12 +70,6 @@ func switchToDesktop(number: Int) {
         return
     }
 
-    // Simulate Control + Option + Command + Up Arrow to enter Mission Control
-    simulateKeyPress(keyCode: 0x7E, flags: [.maskControl, .maskAlternate, .maskCommand])  // 0x7E is Up Arrow
-
-    // Wait for Mission Control to open
-    usleep(100000)
-
     // Simulate pressing the number key for the desired desktop
     let desktopKeyCode = CGKeyCode(0x12 + (number - 1))  // 0x12 is '1' key
     simulateKeyPress(keyCode: desktopKeyCode, flags: .maskControl)
