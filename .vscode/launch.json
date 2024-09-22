@@ -1,0 +1,24 @@
+{
+    "configurations": [
+        {
+            "type": "swift-lldb",
+            "request": "launch",
+            "args": [
+                "mark-window"
+            ],
+            "cwd": "${workspaceFolder:kbdcmd}",
+            "name": "Debug kbdcmd",
+            "program": "${workspaceFolder:kbdcmd}/.build/debug/kbdcmd",
+            "preLaunchTask": "swift: Build Debug kbdcmd"
+        },
+        {
+            "type": "swift-lldb",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:kbdcmd}",
+            "name": "Release kbdcmd",
+            "program": "${workspaceFolder:kbdcmd}/.build/release/kbdcmd",
+            "preLaunchTask": "swift: Build Release kbdcmd"
+        }
+    ]
+}
