@@ -19,8 +19,10 @@ class KeyListener {
         options: .defaultTap,
         eventsOfInterest: CGEventMask(eventMask),
         callback: { (proxy, type, event, refcon) -> Unmanaged<CGEvent>? in
-          KeyListener.handleEvent(proxy: proxy, type: type, event: event)
-          return Unmanaged.passRetained(event)
+          let handled = KeyListener.handleEvent(proxy: proxy, type: type, event: event)
+          print(handled)
+
+          return handled ? nil : Unmanaged.passRetained(event)
         },
         userInfo: nil
       )
@@ -35,16 +37,30 @@ class KeyListener {
     CGEvent.tapEnable(tap: eventTap, enable: true)
   }
 
-  static func handleEvent(proxy: CGEventTapProxy, type: CGEventType, event: CGEvent) {
+  static func handleEvent(proxy: CGEventTapProxy, type: CGEventType, event: CGEvent) -> Bool {
     if type == .keyDown {
       let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
-      if let char = KeyListener.keyCodeToString(keyCode: Int(keyCode), event: event) {
-        KeyListener.shared.processKey(char)
+
+      if event.flags.contains(.maskCmdRight) {
+        print(keyCode)
+        return Keybindings.shared.processCharacter(keyCode)
+      } else {
+        let char = KeyListener.keyCodeToString(keyCode: Int(keyCode), event: event)
+
+        guard let char else {
+          print("Error: Character is nil")
+
+          return false
+        }
+
+        return KeyListener.shared.processCharacter(char)
       }
     }
+
+    return false
   }
 
-  private func processKey(_ char: String) {
+  private func processCharacter(_ char: String) -> Bool {
     let currentTime = Date()
     if currentTime.timeIntervalSince(lastKeyPressTime) > 0.4 {
       buffer = ""
@@ -52,14 +68,18 @@ class KeyListener {
     lastKeyPressTime = currentTime
 
     buffer += char
-    checkAndExpandSnippet()
+    return checkAndExpandSnippet()
   }
 
-  private func checkAndExpandSnippet() {
+  private func checkAndExpandSnippet() -> Bool {
     if let expansion = snippetManager.getExpansion(for: buffer) {
       expandSnippet(expansion)
       buffer = ""
+
+      return true
     }
+
+    return false
   }
 
   private func expandSnippet(_ expansion: String) {

@@ -30,7 +30,7 @@ func simulateKeyPress(keyCode: CGKeyCode, flags: CGEventFlags) {
     keyUp.flags = flags
 
     keyDown.post(tap: .cghidEventTap)
-    usleep(1000)  // Small delay to ensure the event is processed
+    usleep(400)  // Small delay to ensure the event is processed
     keyUp.post(tap: .cghidEventTap)
 }
 
@@ -64,10 +64,10 @@ func createNewWindow(for pid: pid_t) {
     }
 }
 
-func switchToDesktop(number: Int) -> Int {
+func switchToDesktop(number: Int) {
     guard (1...9).contains(number) else {
         print("Error: Invalid desktop number. Must be between 1 and 9.")
-        return -1
+        return
     }
 
     // Simulate Control + Option + Command + Up Arrow to enter Mission Control
@@ -81,7 +81,6 @@ func switchToDesktop(number: Int) -> Int {
     simulateKeyPress(keyCode: desktopKeyCode, flags: .maskControl)
 
     print("Switched to desktop \(number)")
-    return 0
 }
 
 func openOrFocusApp(_ appPath: String) -> Int {
