@@ -7,7 +7,7 @@ func openSystemPreferencesToAccessibility() {
     NSWorkspace.shared.open(url)
 }
 
-func checkAccessibilityPermissions() {
+func checkAccessibilityPermissions() -> Bool {
     if !AXIsProcessTrusted() {
         print("Error: This application doesn't have the required accessibility permissions.")
         print(
@@ -15,8 +15,11 @@ func checkAccessibilityPermissions() {
         )
         print("System Preferences > Security & Privacy > Privacy > Accessibility")
         openSystemPreferencesToAccessibility()
-        exit(1)
+
+        return false
     }
+
+    return true
 }
 
 func simulateKeyPress(keyCode: CGKeyCode, flags: CGEventFlags) {
@@ -128,28 +131,11 @@ func cmdCycleWindows() {
 }
 
 func cmdForemost() {
-
-    if let frontmostApp = WindowMarkManager.shared.getFrontmostAppUsingAccessibility() {
-        print("Frontmost App (Accessibility): \(frontmostApp.localizedName ?? "Unknown")")
+    if !checkAccessibilityPermissions() {
+        exit(1)
     }
 
-    if let frontmostApp = WindowMarkManager.shared.getFrontmostAppUsingAppleScript() {
-        print("Frontmost App (AppleScript): \(frontmostApp.localizedName ?? "Unknown")")
-    }
-
-    if let frontmostApp = WindowMarkManager.shared.getFrontmostAppUsingCGWindow() {
-        print("Frontmost App (Core Graphics): \(frontmostApp.localizedName ?? "Unknown")")
-    }
-
-    if let foregroundWindow = WindowMarkManager.shared.getForegroundWindowUsingWorkspace() {
-        print(
-            "Foreground Window (Workspace): \(foregroundWindow.title) (Application: \(foregroundWindow.appName))"
-        )
-    } else {
-        print("No foreground window found using Workspace.")
-    }
-
-    WindowMarkManager.shared.getWindowsUsingWindowNumbers()
+    WindowManager.main.listWindows()
 }
 
 func cmdOpen(_ appName: String) {
@@ -202,7 +188,9 @@ func executeCommand(_ args: [String]) -> Int {
         return 1
     }
 
-    checkAccessibilityPermissions()
+    if !checkAccessibilityPermissions() {
+        exit(1)
+    }
     command(args)
     return 0
 }
