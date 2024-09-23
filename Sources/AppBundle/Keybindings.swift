@@ -24,7 +24,7 @@ class Keybindings {
       cmdOpenCycle("/Applications/Cursor.app")
     },
     11: {  // B
-      _ = openOrFocusApp("/Applications/Spotify.app")
+      _ = cmdOpenCycle("/Applications/Spotify.app")
     },
     46: {  // M
       cmdOpenCycle("/System/Applications/Mail.app")
