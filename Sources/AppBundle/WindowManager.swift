@@ -15,17 +15,13 @@ class WindowManager {
         return NSWorkspace.shared.frontmostApplication
     }
 
-    func listWindows() -> [Window] {
+    func listWindows(for targetApp: NSRunningApplication? = nil) -> [Window] {
         let windowsInfo = CGWindowListCopyWindowInfo(
             [.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID)
 
         var windows: [Window] = []
 
         for window in Array<NSDictionary>.fromCFArray(records: windowsInfo) ?? [] {
-            // for (key, value) in windowInfo {
-            //     print("\(key): \(value ?? "<null>")")
-            // }
-
             guard let id = window[kCGWindowNumber as String] as? CGWindowID,
                 let pid = window[kCGWindowOwnerPID as String] as? pid_t,
                 let bounds = window[kCGWindowBounds] as? NSDictionary,
@@ -34,6 +30,12 @@ class WindowManager {
                 let app = NSRunningApplication(processIdentifier: pid)
             else {
                 continue
+            }
+
+            if targetApp != nil {
+                if app.bundleIdentifier != targetApp!.bundleIdentifier {
+                    continue
+                }
             }
 
             if app.bundleIdentifier == "com.apple.WindowManager" {
@@ -47,8 +49,6 @@ class WindowManager {
             let window = Window(number: id, pid: pid, app: app)
 
             windows.append(window)
-
-            print(window, app.localizedName, app.processIdentifier, app.bundleIdentifier)
         }
 
         return windows

@@ -45,8 +45,6 @@ func cycleAppWindows() {
         return
     }
 
-    var frontmostWindowHandled = false
-
     let axApp = AXUIElementCreateApplication(frontmostApp.processIdentifier)
 
     var axValue: AnyObject?
@@ -80,6 +78,10 @@ func cycleAppWindows() {
 
         let axWindow = axWindows[ti]
         print("Rising window", axWindow)
+
+        if axWindow.get(Ax.minimizedAttr) == true {
+            continue
+        }
 
         axWindow.raise()
     }
@@ -143,8 +145,18 @@ func openOrFocusApp(_ appPath: String) -> Int {
     }
     ) {
         if runningApp.isActive {
-            createNewWindow(for: runningApp.processIdentifier)
-            return 201
+            let windows = WindowManager.main.listWindows(for: runningApp)
+
+            if windows.count == 0 {
+                createNewWindow(for: runningApp.processIdentifier)
+
+                return 201
+
+            } else {
+                cycleAppWindows()
+
+                return 202
+            }
         } else {
             runningApp.activate(options: .activateIgnoringOtherApps)
             return 202
@@ -171,16 +183,6 @@ func launchApp(at url: URL) {
 
 func cmdCycleWindows() {
     cycleAppWindows()
-}
-
-func cmdForemost() {
-    if !checkAccessibilityPermissions() {
-        exit(1)
-    }
-
-    //WindowManager.main.listWindows()
-
-    print(WindowMarkManager.shared.getFrontmostAppUsingAccessibility())
 }
 
 func cmdOpen(_ appName: String) {
@@ -225,7 +227,6 @@ func executeCommand(_ args: [String]) -> Int {
         "daemon": { _ in cmdDameon() },
         "mark-window": { _ in cmdMarkWindow() },
         "focus-mark": { cmdFocusMark($0[2]) },
-        "foremost": { _ in cmdForemost() },
     ]
 
     guard args.count > 1, let command = commands[args[1]] else {
