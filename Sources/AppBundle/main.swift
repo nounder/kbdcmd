@@ -77,7 +77,6 @@ func cycleAppWindows() {
         let ti = axWindows.count - i - 1
 
         let axWindow = axWindows[ti]
-        print("Rising window", axWindow)
 
         if axWindow.get(Ax.minimizedAttr) == true {
             continue
@@ -148,13 +147,13 @@ func openOrFocusApp(_ appPath: String) -> Int {
             let windows = WindowManager.main.listWindows(for: runningApp)
 
             if windows.count == 0 {
+                // this doesn't work for some apps like spotify or kitty
                 createNewWindow(for: runningApp.processIdentifier)
+                // runningApp.activate(options: .activateIgnoringOtherApps)
 
                 return 201
 
             } else {
-                cycleAppWindows()
-
                 return 202
             }
         } else {
