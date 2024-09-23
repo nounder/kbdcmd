@@ -163,22 +163,17 @@ func openOrFocusApp(_ appPath: String) -> Int {
         }
     }
 
-    // If not running, launch the app
-    do {
-        try workspace.launchApplication(at: appURL, options: [], configuration: [:])
-        return 201
-    } catch {
-        print("Failed to launch the application: \(error)")
-        return 500
-    }
+    NSWorkspace.shared.openApplication(
+        at: appURL,
+        configuration: NSWorkspace.OpenConfiguration())
+
+    return 201
 }
 
 func launchApp(at url: URL) {
-    do {
-        try NSWorkspace.shared.launchApplication(at: url, options: [], configuration: [:])
-    } catch {
-        print("Failed to launch the application: \(error)")
-    }
+    NSWorkspace.shared.openApplication(
+        at: url,
+        configuration: NSWorkspace.OpenConfiguration())
 }
 
 func cmdCycleWindows() {
