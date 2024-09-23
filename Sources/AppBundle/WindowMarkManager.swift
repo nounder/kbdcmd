@@ -215,10 +215,13 @@ class WindowMarkManager: ObservableObject {
 
   /// Retrieves the frontmost application using Accessibility APIs.
   func getFrontmostAppUsingAccessibility() -> NSRunningApplication? {
+    print("ismain", Thread.isMainThread)
     let systemWideElement = AXUIElementCreateSystemWide()
     var frontApp: AnyObject?
     let result = AXUIElementCopyAttributeValue(
       systemWideElement, kAXFocusedApplicationAttribute as CFString, &frontApp)
+
+    print(result.rawValue)
 
     guard result == .success else {
       print("Failed to retrieve front app using Accessibility APIs.")

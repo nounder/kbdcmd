@@ -20,7 +20,6 @@ class KeyListener {
         eventsOfInterest: CGEventMask(eventMask),
         callback: { (proxy, type, event, refcon) -> Unmanaged<CGEvent>? in
           let handled = KeyListener.handleEvent(proxy: proxy, type: type, event: event)
-          print(handled)
 
           return handled ? nil : Unmanaged.passRetained(event)
         },
@@ -42,7 +41,6 @@ class KeyListener {
       let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
 
       if event.flags.contains(.maskCmdRight) {
-        print(keyCode)
         return Keybindings.shared.processCharacter(keyCode)
       } else {
         let char = KeyListener.keyCodeToString(keyCode: Int(keyCode), event: event)

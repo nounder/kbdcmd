@@ -38,8 +38,51 @@ func simulateKeyPress(keyCode: CGKeyCode, flags: CGEventFlags) {
 }
 
 func cycleAppWindows() {
-    simulateKeyPress(keyCode: 0x32, flags: .maskCommand)  // 0x32 is the keycode for `
-    print("Simulated Cmd + ` key press to cycle windows")
+    let manager = WindowManager.main
+
+    guard let frontmostApp = manager.getFrontmostApplication() else {
+        print("Cannot get frontmost application")
+        return
+    }
+
+    var frontmostWindowHandled = false
+
+    let axApp = AXUIElementCreateApplication(frontmostApp.processIdentifier)
+
+    var axValue: AnyObject?
+    let result = AXUIElementCopyAttributeValue(
+        axApp, kAXWindowsAttribute as CFString, &axValue)
+
+    guard result == .success else {
+        print("Could not get Accessability windows")
+
+        return
+    }
+
+    let axWindows = axValue as? [AXUIElement]
+
+    guard let axWindows = axWindows else {
+        print("Could not get Accessability windows")
+
+        return
+    }
+
+    let appWindows = manager.listWindows().filter {
+        $0.app.processIdentifier == frontmostApp.processIdentifier
+    }
+
+    if appWindows.count == 0 {
+        return
+    }
+
+    for (i, window) in appWindows[1...].reversed().enumerated() {
+        let ti = axWindows.count - i - 1
+
+        let axWindow = axWindows[ti]
+        print("Rising window", axWindow)
+
+        axWindow.raise()
+    }
 }
 
 func createNewWindow(for pid: pid_t) {
@@ -135,7 +178,9 @@ func cmdForemost() {
         exit(1)
     }
 
-    WindowManager.main.listWindows()
+    //WindowManager.main.listWindows()
+
+    print(WindowMarkManager.shared.getFrontmostAppUsingAccessibility())
 }
 
 func cmdOpen(_ appName: String) {

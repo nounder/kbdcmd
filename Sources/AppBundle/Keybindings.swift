@@ -14,6 +14,9 @@ class Keybindings {
     1: {  // S
       cmdOpenCycle("/Applications/Safari.app")
     },
+    38: {  // J
+      //
+    },
     3: {  // F
       cmdOpenCycle("/Applications/Google Chrome.app")
     },
@@ -21,7 +24,7 @@ class Keybindings {
       cmdOpenCycle("/Applications/Cursor.app")
     },
     11: {  // B
-      cmdOpenCycle("/Applications/Spotify.app")
+      _ = openOrFocusApp("/Applications/Spotify.app")
     },
     46: {  // M
       cmdOpenCycle("/System/Applications/Mail.app")
@@ -57,10 +60,7 @@ class Keybindings {
 
   func processCharacter(_ keyCode: Int64) -> Bool {
     if let action = rightCommandKeybindings[keyCode] {
-      print(action)
-      DispatchQueue.global(qos: .userInitiated).async {
-        action()
-      }
+      action()
 
       return true
     }

@@ -1,3 +1,4 @@
+import ApplicationServices
 import Cocoa
 import CoreGraphics
 
@@ -9,6 +10,10 @@ struct Window {
 
 class WindowManager {
     static let main = WindowManager()
+
+    func getFrontmostApplication() -> NSRunningApplication? {
+        return NSWorkspace.shared.frontmostApplication
+    }
 
     func listWindows() -> [Window] {
         let windowsInfo = CGWindowListCopyWindowInfo(

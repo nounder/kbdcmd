@@ -6,13 +6,8 @@ import PackageDescription
 let package = Package(
   name: "kbdcmd",
   platforms: [.macOS(.v12)],
-  products: [
-    //.library(name: "Kbdcmd", targets: ["KbdcmdFramework"])
-  ],
 
   targets: [
-    //.target(name: "KbdcmdFramework", path: "Sources"),
-
     .executableTarget(
       name: "kbdcmd"
     )
