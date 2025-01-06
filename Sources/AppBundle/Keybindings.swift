@@ -9,13 +9,10 @@ class Keybindings {
       cycleAppWindows()
     },
     2: {  // D
-      cmdOpenCycle("/Applications/kitty.app")
+      cmdOpenCycle("/Applications/Ghostty.app")
     },
     1: {  // S
       cmdOpenCycle("/Applications/Safari.app")
-    },
-    38: {  // J
-      //
     },
     3: {  // F
       cmdOpenCycle("/Applications/Google Chrome.app")
@@ -24,7 +21,19 @@ class Keybindings {
       cmdOpenCycle("/Applications/Cursor.app")
     },
     11: {  // B
-      _ = cmdOpenCycle("/Applications/Spotify.app")
+      cmdOpenCycle("/Applications/Spotify.app")
+    },
+    8: {  // C
+      cmdOpenCycle("/System/Applications/Calendar.app")
+    },
+    5: { // G
+      cmdOpenCycle("/Applications/ChatGPT.app")
+    },
+    4: { // H
+      cmdOpenCycle("/Users/rg/Applications/Claude.app")
+    },
+    38: { // J
+      cmdOpenCycle("/Users/rg/Applications/Perplexity.app")
     },
     46: {  // M
       cmdOpenCycle("/System/Applications/Mail.app")
