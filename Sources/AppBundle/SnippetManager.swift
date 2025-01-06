@@ -8,6 +8,13 @@ class SnippetManager {
         df.dateFormat = "yyyy-MM-dd"
         return df.string(from: Date())
       }()
+    },
+    "tds": {
+      {
+        let df = DateFormatter()
+        df.dateFormat = "yyMMdd"
+        return df.string(from: Date())
+      }()
     }
   ]
 
