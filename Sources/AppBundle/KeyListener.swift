@@ -82,7 +82,7 @@ class KeyListener {
 
   private func expandSnippet(_ expansion: String) {
     // Delete the trigger string
-    for _ in 0..<buffer.count {
+    for _ in 0..<buffer.count - 1 {
       simulateKeyPress(keyCode: 0x33, flags: [])  // Backspace key
     }
 
