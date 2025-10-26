@@ -1,6 +1,12 @@
 import ApplicationServices
 import Cocoa
 
+enum AppOpenResult {
+  case invalidPath
+  case opened
+  case focused
+}
+
 func openSystemPreferencesToAccessibility() {
   let url = URL(
     string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!
@@ -65,50 +71,70 @@ func cycleAppWindows() {
     return
   }
 
-  let appWindows = manager.listWindows().filter {
-    $0.app.processIdentifier == frontmostApp.processIdentifier
+  let nonMinimizedWindows = axWindows.filter {
+    $0.get(Ax.minimizedAttr) != true
   }
 
-  if appWindows.count == 0 {
+  if nonMinimizedWindows.count <= 1 {
     return
   }
 
-  for (i, window) in appWindows[1...].reversed().enumerated() {
-    let ti = axWindows.count - i - 1
-
-    let axWindow = axWindows[ti]
-
-    if axWindow.get(Ax.minimizedAttr) == true {
-      continue
-    }
-
+  for axWindow in nonMinimizedWindows[1...].reversed() {
     axWindow.raise()
   }
 }
 
-func createNewWindow(for pid: pid_t) {
-  let app = AXUIElementCreateApplication(pid)
-
+func createNewWindowViaMenu(for app: AXUIElement) -> Bool {
   var menuBar: AnyObject?
-  let result = AXUIElementCopyAttributeValue(app, kAXMenuBarAttribute as CFString, &menuBar)
-
-  guard result == .success,
-    let menuBarElement = menuBar,
-    CFGetTypeID(menuBarElement) == AXUIElementGetTypeID()
-  else {
-    print("Failed to get menu bar. AXError: \(result.rawValue)")
-    return
+  guard AXUIElementCopyAttributeValue(app, kAXMenuBarAttribute as CFString, &menuBar) == .success,
+        CFGetTypeID(menuBar) == AXUIElementGetTypeID() else {
+    return false
   }
-
-  let menuBarAXElement = menuBarElement as! AXUIElement
-  let newWindowCommand = "New Window" as CFString
-  let actionResult = AXUIElementPerformAction(menuBarAXElement, newWindowCommand)
-
-  if actionResult == .success {
-    print("Successfully created a new window")
-  } else {
-    print("Failed to create new window. AXError: \(actionResult.rawValue)")
+  
+  let menuBarElement = menuBar as! AXUIElement
+  
+  var children: AnyObject?
+  guard AXUIElementCopyAttributeValue(menuBarElement, kAXChildrenAttribute as CFString, &children) == .success,
+        let menuBarItems = children as? [AXUIElement] else {
+    return false
   }
+  
+  for menuBarItem in menuBarItems {
+    var title: AnyObject?
+    guard AXUIElementCopyAttributeValue(menuBarItem, kAXTitleAttribute as CFString, &title) == .success,
+          let titleString = title as? String,
+          titleString == "File" else {
+      continue
+    }
+    
+    var menuChildren: AnyObject?
+    guard AXUIElementCopyAttributeValue(menuBarItem, kAXChildrenAttribute as CFString, &menuChildren) == .success,
+          let menus = menuChildren as? [AXUIElement],
+          let fileMenu = menus.first else {
+      continue
+    }
+    
+    var menuItems: AnyObject?
+    guard AXUIElementCopyAttributeValue(fileMenu, kAXChildrenAttribute as CFString, &menuItems) == .success,
+          let items = menuItems as? [AXUIElement] else {
+      continue
+    }
+    
+    for item in items {
+      var itemTitle: AnyObject?
+      guard AXUIElementCopyAttributeValue(item, kAXTitleAttribute as CFString, &itemTitle) == .success,
+            let itemTitleString = itemTitle as? String,
+            itemTitleString.contains("New Window") else {
+        continue
+      }
+      
+      return AXUIElementPerformAction(item, kAXPressAction as CFString) == .success
+    }
+    
+    break
+  }
+  
+  return false
 }
 
 func switchToDesktop(number: Int) {
@@ -124,50 +150,84 @@ func switchToDesktop(number: Int) {
   print("Switched to desktop \(number)")
 }
 
-func openOrFocusApp(_ appPath: String) -> Int {
-  let workspace = NSWorkspace.shared
+func openOrFocusApp(_ appPath: String, ignoreMinimized: Bool = true) -> AppOpenResult {
   let fileManager = FileManager.default
 
-  // Ensure the path exists and is an app bundle
+  // Validate app path exists and is an application bundle
   guard fileManager.fileExists(atPath: appPath),
     appPath.hasSuffix(".app")
   else {
     print("Invalid application path")
-    return 404
+    return .invalidPath
   }
 
   let appURL = URL(fileURLWithPath: appPath)
+  
+  guard let bundle = Bundle(url: appURL),
+        let bundleId = bundle.bundleIdentifier else {
+    NSWorkspace.shared.openApplication(
+      at: appURL,
+      configuration: NSWorkspace.OpenConfiguration())
+    return .opened
+  }
 
-  // Check if the app is already running
   if let runningApp = NSWorkspace.shared.runningApplications.first(where: {
-    $0.bundleURL == appURL
+    $0.bundleIdentifier == bundleId
   }
   ) {
-    if !runningApp.isActive {
-      runningApp.activate(options: .activateIgnoringOtherApps)
-    }
-
-    if runningApp.isActive {
-      let windows = WindowManager.main.listWindows(for: runningApp)
-
-      if windows.count == 0 {
-        NSWorkspace.shared.openApplication(
-          at: runningApp.bundleURL!,
-          configuration: NSWorkspace.OpenConfiguration())
-
-        return 201
-
-      } else {
-        return 202
+    let isAlreadyFrontmost = runningApp.isActive
+    let axApp = AXUIElementCreateApplication(runningApp.processIdentifier)
+    
+    var axValue: AnyObject?
+    let result = AXUIElementCopyAttributeValue(
+      axApp, kAXWindowsAttribute as CFString, &axValue)
+    
+    if result == .success, let axWindows = axValue as? [AXUIElement] {
+      // When ignoreMinimized is true, check if all windows are minimized and create a new window if so
+      if ignoreMinimized {
+        let hasNonMinimizedWindow = axWindows.contains { $0.get(Ax.minimizedAttr) != true }
+        
+        if !hasNonMinimizedWindow {
+          runningApp.activate(options: .activateIgnoringOtherApps)
+          if createNewWindowViaMenu(for: axApp) {
+            return .opened
+          }
+          return .opened
+        }
+      }
+      
+      // If app is already frontmost and has multiple windows, cycle through them
+      if isAlreadyFrontmost && axWindows.count > 1 {
+        let manager = WindowManager.main
+        let appWindows = manager.listWindows().filter {
+          $0.app.processIdentifier == runningApp.processIdentifier
+        }
+        
+        if appWindows.count > 1 {
+          for (i, _) in appWindows[1...].reversed().enumerated() {
+            let ti = axWindows.count - i - 1
+            let axWindow = axWindows[ti]
+            
+            if axWindow.get(Ax.minimizedAttr) == true {
+              continue
+            }
+            
+            axWindow.raise()
+          }
+          return .focused
+        }
       }
     }
+    
+    runningApp.activate(options: .activateIgnoringOtherApps)
+    return .focused
   }
 
   NSWorkspace.shared.openApplication(
     at: appURL,
     configuration: NSWorkspace.OpenConfiguration())
 
-  return 201
+  return .opened
 }
 
 func launchApp(at url: URL) {
@@ -185,9 +245,9 @@ func cmdOpen(_ appName: String) {
 }
 
 func cmdOpenCycle(_ appName: String) {
-  let status = openOrFocusApp(appName)
+  let result = openOrFocusApp(appName)
 
-  if status == 201 || status == 202 {
+  if result == .opened || result == .focused {
     cycleAppWindows()
   }
 }
