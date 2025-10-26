@@ -9,6 +9,7 @@ class KeyListener {
   private var buffer: String = ""
   private var lastKeyPressTime: Date = Date()
   private let snippetManager = SnippetManager()
+  private var overlayShowTimer: Timer?
 
   init() {
     // Listen for keyDown, keyUp, and flagsChanged events (for modifier keys like right command)
@@ -45,10 +46,11 @@ class KeyListener {
       // Right Command key code is 54
       if keyCode == 54 {
         if event.flags.contains(.maskCmdRight) {
-          // Right Command pressed
-          WindowSwitcherOverlay.shared.show()
+          // Right Command pressed - start timer to show overlay after 400ms
+          KeyListener.shared.scheduleOverlayShow()
         } else {
-          // Right Command released
+          // Right Command released - cancel timer and hide overlay
+          KeyListener.shared.cancelOverlayShow()
           WindowSwitcherOverlay.shared.hide()
         }
       }
@@ -61,6 +63,8 @@ class KeyListener {
       let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
 
       if event.flags.contains(.maskCmdRight) {
+        // Another key pressed while holding right command - cancel overlay show
+        KeyListener.shared.cancelOverlayShow()
         return Keybindings.shared.processCharacter(keyCode)
       } else {
         let char = KeyListener.keyCodeToString(keyCode: Int(keyCode), event: event)
@@ -76,6 +80,21 @@ class KeyListener {
     }
 
     return false
+  }
+  
+  private func scheduleOverlayShow() {
+    // Cancel any existing timer
+    overlayShowTimer?.invalidate()
+    
+    // Schedule new timer to show overlay after 200ms
+    overlayShowTimer = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: false) { _ in
+      WindowSwitcherOverlay.shared.show()
+    }
+  }
+  
+  private func cancelOverlayShow() {
+    overlayShowTimer?.invalidate()
+    overlayShowTimer = nil
   }
 
   private func processCharacter(_ char: String) -> Bool {
