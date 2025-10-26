@@ -9,13 +9,14 @@ class Keybindings {
       cycleAppWindows()
     },
     2: {  // D
+      // cmdOpenCycle("/Applications/kitty.app")
       cmdOpenCycle("/Applications/Ghostty.app")
     },
     1: {  // S
       cmdOpenCycle("/Applications/Safari.app")
     },
     3: {  // F
-      cmdOpenCycle("/Applications/Google Chrome.app")
+      cmdOpenCycle("/Applications/Google Chrome Canary.app")
     },
     9: {  // V
       cmdOpenCycle("/Applications/Cursor.app")
