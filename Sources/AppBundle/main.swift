@@ -84,57 +84,119 @@ func cycleAppWindows() {
   }
 }
 
-func createNewWindowViaMenu(for app: AXUIElement) -> Bool {
+func getMenuBarItems(for app: AXUIElement) -> [AXUIElement]? {
   var menuBar: AnyObject?
   guard AXUIElementCopyAttributeValue(app, kAXMenuBarAttribute as CFString, &menuBar) == .success,
         CFGetTypeID(menuBar) == AXUIElementGetTypeID() else {
-    return false
+    return nil
   }
   
   let menuBarElement = menuBar as! AXUIElement
+  return collectMenuItems(from: menuBarElement, maxDepth: 2)
+}
+
+func collectMenuItems(from element: AXUIElement, maxDepth: Int, currentDepth: Int = 0) -> [AXUIElement] {
+  var result: [AXUIElement] = []
+  
+  guard currentDepth < maxDepth else {
+    return result
+  }
   
   var children: AnyObject?
-  guard AXUIElementCopyAttributeValue(menuBarElement, kAXChildrenAttribute as CFString, &children) == .success,
-        let menuBarItems = children as? [AXUIElement] else {
+  guard AXUIElementCopyAttributeValue(element, kAXChildrenAttribute as CFString, &children) == .success,
+        let childElements = children as? [AXUIElement] else {
+    return result
+  }
+  
+  for child in childElements {
+    result.append(child)
+    result.append(contentsOf: collectMenuItems(from: child, maxDepth: maxDepth, currentDepth: currentDepth + 1))
+  }
+  
+  return result
+}
+
+func hasKeyboardShortcut(_ menuItem: AXUIElement, character: String, exactModifiers: Int) -> Bool {
+  var cmdChar: AnyObject?
+  var cmdMods: AnyObject?
+  
+  guard AXUIElementCopyAttributeValue(menuItem, kAXMenuItemCmdCharAttribute as CFString, &cmdChar) == .success,
+        let cmdCharString = cmdChar as? String,
+        cmdCharString.lowercased() == character.lowercased() else {
     return false
   }
   
-  for menuBarItem in menuBarItems {
-    var title: AnyObject?
-    guard AXUIElementCopyAttributeValue(menuBarItem, kAXTitleAttribute as CFString, &title) == .success,
-          let titleString = title as? String,
-          titleString == "File" else {
-      continue
+  guard AXUIElementCopyAttributeValue(menuItem, kAXMenuItemCmdModifiersAttribute as CFString, &cmdMods) == .success,
+        let itemModifiers = cmdMods as? Int else {
+    return false
+  }
+  
+  // Get title for debugging
+  var title: AnyObject?
+  let titleStr = AXUIElementCopyAttributeValue(menuItem, kAXTitleAttribute as CFString, &title) == .success ? (title as? String ?? "unknown") : "unknown"
+  print("Menu item: '\(titleStr)', char: '\(cmdCharString)', modifiers: \(itemModifiers), expected: \(exactModifiers)")
+  
+  // Must match exactly - no extra modifiers allowed
+  // Cmd only = 1, Cmd+Shift = 3, Cmd+Option = 5, Cmd+Control = 9
+  // We need strict equality to avoid matching Cmd+Shift+N when looking for Cmd+N
+  return itemModifiers == exactModifiers
+}
+
+func createNewWindowViaMenu(for app: AXUIElement) -> Bool {
+  guard let menuItems = getMenuBarItems(for: app) else {
+    print("DEBUG: Could not get menu items")
+    return false
+  }
+  
+  print("DEBUG: Got \(menuItems.count) menu items")
+  
+  // Get localized "File" menu name from system
+  let localizedFileMenu = getLocalizedString(key: "File", tableName: "MenuCommands")
+  let localizedNewWindow = getLocalizedString(key: "New Window", tableName: "MenuCommands")
+  
+  print("DEBUG: Looking for File menu: '\(localizedFileMenu)', New Window: '\(localizedNewWindow)'")
+  
+  for menuItem in menuItems {
+    // First try: Look for Cmd+N keyboard shortcut (most reliable, language-independent)
+    // Note: modifiers value 0 means Cmd only, 1 means Cmd+Shift
+    // We want ONLY Cmd (value = 0), not Cmd+Shift (value = 1)
+    if hasKeyboardShortcut(menuItem, character: "n", exactModifiers: 0) {
+      print("DEBUG: Found matching shortcut, performing action")
+      return AXUIElementPerformAction(menuItem, kAXPressAction as CFString) == .success
     }
     
-    var menuChildren: AnyObject?
-    guard AXUIElementCopyAttributeValue(menuBarItem, kAXChildrenAttribute as CFString, &menuChildren) == .success,
-          let menus = menuChildren as? [AXUIElement],
-          let fileMenu = menus.first else {
-      continue
-    }
-    
-    var menuItems: AnyObject?
-    guard AXUIElementCopyAttributeValue(fileMenu, kAXChildrenAttribute as CFString, &menuItems) == .success,
-          let items = menuItems as? [AXUIElement] else {
-      continue
-    }
-    
-    for item in items {
-      var itemTitle: AnyObject?
-      guard AXUIElementCopyAttributeValue(item, kAXTitleAttribute as CFString, &itemTitle) == .success,
-            let itemTitleString = itemTitle as? String,
-            itemTitleString.contains("New Window") else {
-        continue
+    // Second try: Check if this is in File menu and has exact "New Window" title
+    var itemTitle: AnyObject?
+    if AXUIElementCopyAttributeValue(menuItem, kAXTitleAttribute as CFString, &itemTitle) == .success,
+       let itemTitleString = itemTitle as? String,
+       itemTitleString == localizedNewWindow {
+      var parent: AnyObject?
+      if AXUIElementCopyAttributeValue(menuItem, kAXParentAttribute as CFString, &parent) == .success,
+         CFGetTypeID(parent) == AXUIElementGetTypeID() {
+        let parentElement = parent as! AXUIElement
+        var parentTitle: AnyObject?
+        if AXUIElementCopyAttributeValue(parentElement, kAXTitleAttribute as CFString, &parentTitle) == .success,
+           let parentTitleString = parentTitle as? String,
+           parentTitleString == localizedFileMenu {
+          return AXUIElementPerformAction(menuItem, kAXPressAction as CFString) == .success
+        }
       }
-      
-      return AXUIElementPerformAction(item, kAXPressAction as CFString) == .success
     }
-    
-    break
   }
   
   return false
+}
+
+func getLocalizedString(key: String, tableName: String) -> String {
+  // Try to get system localized string
+  // This searches in /System/Library/Frameworks/AppKit.framework/Resources/
+  if let bundle = Bundle(identifier: "com.apple.AppKit") {
+    let localized = bundle.localizedString(forKey: key, value: nil, table: tableName)
+    if localized != key {
+      return localized
+    }
+  }
+  return key
 }
 
 func switchToDesktop(number: Int) {
