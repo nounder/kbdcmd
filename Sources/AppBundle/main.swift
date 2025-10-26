@@ -188,10 +188,19 @@ func openOrFocusApp(_ appPath: String, ignoreMinimized: Bool = true) -> AppOpenR
         let hasNonMinimizedWindow = axWindows.contains { $0.get(Ax.minimizedAttr) != true }
         
         if !hasNonMinimizedWindow {
+          // Activate the app first to ensure any new window will be frontmost
           runningApp.activate(options: .activateIgnoringOtherApps)
+          
+          // First try to create a new window via menu (if File > New Window exists)
           if createNewWindowViaMenu(for: axApp) {
             return .opened
           }
+          // If menu approach failed (no File > New Window), re-open the app
+          // This handles apps like Calendar that don't have File > New Window
+          // Calling openApplication on an already-running app shows its window
+          NSWorkspace.shared.openApplication(
+            at: appURL,
+            configuration: NSWorkspace.OpenConfiguration())
           return .opened
         }
       }
@@ -217,6 +226,10 @@ func openOrFocusApp(_ appPath: String, ignoreMinimized: Bool = true) -> AppOpenR
           return .focused
         }
       }
+    } else {
+      // If we can't get windows info, just activate the app
+      runningApp.activate(options: .activateIgnoringOtherApps)
+      return .focused
     }
     
     runningApp.activate(options: .activateIgnoringOtherApps)
