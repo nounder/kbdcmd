@@ -1,0 +1,232 @@
+import Combine
+import Cocoa
+import SwiftUI
+
+struct WindowInfo: Identifiable {
+  let id: CGWindowID
+  let title: String
+  let appName: String
+  let appIcon: NSImage?
+  let windowNumber: CGWindowID
+  let isMinimized: Bool
+  let pid: pid_t
+  let axWindow: AXUIElement?
+}
+
+struct AppWindowGroup: Identifiable {
+  let id: String
+  let appName: String
+  let appIcon: NSImage?
+  let windows: [WindowInfo]
+  let pid: pid_t
+}
+
+class WindowChangePublisher: ObservableObject {
+  @Published var windowGroups: [AppWindowGroup] = []
+  
+  private var axObservers: [AXObserver] = []
+  private var workspaceObservers: [NSObjectProtocol] = []
+  
+  func startMonitoring() {
+    refresh()
+    setupWorkspaceNotifications()
+    setupAccessibilityObservers()
+  }
+  
+  func stopMonitoring() {
+    removeWorkspaceNotifications()
+    removeAccessibilityObservers()
+  }
+  
+  private func refresh() {
+    windowGroups = getWindowGroups()
+  }
+  
+  private func setupWorkspaceNotifications() {
+    let notifications: [NSNotification.Name] = [
+      NSWorkspace.didActivateApplicationNotification,
+      NSWorkspace.didLaunchApplicationNotification,
+      NSWorkspace.didTerminateApplicationNotification
+    ]
+    
+    for name in notifications {
+      let observer = NotificationCenter.default.addObserver(
+        forName: name,
+        object: nil,
+        queue: .main
+      ) { [weak self] _ in
+        self?.refresh()
+      }
+      workspaceObservers.append(observer)
+    }
+  }
+  
+  private func removeWorkspaceNotifications() {
+    for observer in workspaceObservers {
+      NotificationCenter.default.removeObserver(observer)
+    }
+    workspaceObservers.removeAll()
+  }
+  
+  private func setupAccessibilityObservers() {
+    let runningApps = NSWorkspace.shared.runningApplications
+    
+    for app in runningApps {
+      guard app.activationPolicy == .regular else { continue }
+      
+      var observer: AXObserver?
+      let result = AXObserverCreate(
+        app.processIdentifier,
+        { (observer, element, notification, refcon) in
+          let publisher = Unmanaged<WindowChangePublisher>.fromOpaque(refcon!).takeUnretainedValue()
+          publisher.refresh()
+        },
+        &observer
+      )
+      
+      guard result == .success, let observer = observer else {
+        continue
+      }
+      
+      let appElement = AXUIElementCreateApplication(app.processIdentifier)
+      
+      let notifications = [
+        kAXWindowCreatedNotification,
+        kAXUIElementDestroyedNotification,
+        kAXWindowMiniaturizedNotification,
+        kAXWindowDeminiaturizedNotification
+      ]
+      
+      for notification in notifications {
+        AXObserverAddNotification(
+          observer,
+          appElement,
+          notification as CFString,
+          Unmanaged.passUnretained(self).toOpaque()
+        )
+      }
+      
+      CFRunLoopAddSource(
+        CFRunLoopGetCurrent(),
+        AXObserverGetRunLoopSource(observer),
+        .defaultMode
+      )
+      
+      axObservers.append(observer)
+    }
+  }
+  
+  private func removeAccessibilityObservers() {
+    for observer in axObservers {
+      CFRunLoopRemoveSource(
+        CFRunLoopGetCurrent(),
+        AXObserverGetRunLoopSource(observer),
+        .defaultMode
+      )
+    }
+    axObservers.removeAll()
+  }
+  
+  private func getWindowGroups() -> [AppWindowGroup] {
+    let runningApps = NSWorkspace.shared.runningApplications
+    
+    var groupedWindows: [String: [WindowInfo]] = [:]
+    
+    for app in runningApps {
+      guard let appName = app.localizedName,
+            app.activationPolicy == .regular else {
+        continue
+      }
+      
+      let appIcon = app.icon
+      let axApp = AXUIElementCreateApplication(app.processIdentifier)
+      
+      var axValue: AnyObject?
+      let result = AXUIElementCopyAttributeValue(
+        axApp, kAXWindowsAttribute as CFString, &axValue)
+      
+      guard result == .success, let axWindows = axValue as? [AXUIElement] else {
+        continue
+      }
+      
+      for axWindow in axWindows {
+        guard let windowId = axWindow.containingWindowId() else {
+          continue
+        }
+        
+        // Filter out non-interactive windows
+        let subrole = axWindow.get(Ax.subroleAttr)
+        
+        // Skip utility windows, system dialogs, and other non-standard windows
+        if let subrole = subrole {
+          let excludedSubroles = [
+            "AXSystemDialog",
+            "AXDialog",
+            "AXUnknown"
+          ]
+          if excludedSubroles.contains(subrole) {
+            continue
+          }
+        }
+        
+        // Get window role
+        let role = axWindow.get(Ax.roleAttr)
+        
+        // Only include standard windows
+        if let role = role, role != "AXWindow" {
+          continue
+        }
+        
+        // Check if window has a size (filter out invisible windows)
+        guard let size = axWindow.get(Ax.sizeAttr) else {
+          continue
+        }
+        
+        // Filter out very small windows (likely overlays or utility windows)
+        if size.width < 100 || size.height < 100 {
+          continue
+        }
+        
+        let windowTitle = axWindow.get(Ax.titleAttr) ?? "Window \(windowId)"
+        let isMinimized = axWindow.get(Ax.minimizedAttr) ?? false
+        
+        // Skip windows with empty titles that aren't minimized (likely overlays)
+        // but keep minimized windows even if they have empty titles
+        if windowTitle.isEmpty && !isMinimized {
+          continue
+        }
+        
+        let windowInfo = WindowInfo(
+          id: windowId,
+          title: windowTitle.isEmpty ? "Untitled" : windowTitle,
+          appName: appName,
+          appIcon: appIcon,
+          windowNumber: windowId,
+          isMinimized: isMinimized,
+          pid: app.processIdentifier,
+          axWindow: axWindow
+        )
+        
+        if groupedWindows[appName] == nil {
+          groupedWindows[appName] = []
+        }
+        groupedWindows[appName]?.append(windowInfo)
+      }
+    }
+    
+    return groupedWindows.map { appName, windows in
+      AppWindowGroup(
+        id: appName,
+        appName: appName,
+        appIcon: windows.first?.appIcon,
+        windows: windows.sorted { 
+          if $0.isMinimized != $1.isMinimized {
+            return !$0.isMinimized
+          }
+          return $0.title < $1.title
+        },
+        pid: windows.first?.pid ?? 0
+      )
+    }.sorted { $0.appName < $1.appName }
+  }
+}

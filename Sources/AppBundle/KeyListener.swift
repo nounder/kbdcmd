@@ -11,7 +11,8 @@ class KeyListener {
   private let snippetManager = SnippetManager()
 
   init() {
-    let eventMask = (1 << CGEventType.keyDown.rawValue) | (1 << CGEventType.keyUp.rawValue)
+    // Listen for keyDown, keyUp, and flagsChanged events (for modifier keys like right command)
+    let eventMask = (1 << CGEventType.keyDown.rawValue) | (1 << CGEventType.keyUp.rawValue) | (1 << CGEventType.flagsChanged.rawValue)
     guard
       let eventTap = CGEvent.tapCreate(
         tap: .cgSessionEventTap,
@@ -37,6 +38,25 @@ class KeyListener {
   }
 
   static func handleEvent(proxy: CGEventTapProxy, type: CGEventType, event: CGEvent) -> Bool {
+    // rcmd is pressed
+    if type == .flagsChanged {
+      let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
+      
+      // Right Command key code is 54
+      if keyCode == 54 {
+        if event.flags.contains(.maskCmdRight) {
+          // Right Command pressed
+          WindowSwitcherOverlay.shared.show()
+        } else {
+          // Right Command released
+          WindowSwitcherOverlay.shared.hide()
+        }
+      }
+      
+      return false
+    }
+    
+    // a key with rcmd is pressed
     if type == .keyDown {
       let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
 
