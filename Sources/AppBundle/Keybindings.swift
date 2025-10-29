@@ -66,6 +66,9 @@ class Keybindings {
     29: {  // 9
       switchToDesktop(number: 9)
     },
+    31: {  // O
+      AccessibilityOverlay.shared.show()
+    },
   ]
 
   func processCharacter(_ keyCode: Int64) -> Bool {

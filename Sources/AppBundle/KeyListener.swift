@@ -62,6 +62,12 @@ class KeyListener {
     if type == .keyDown {
       let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
 
+      // ESC key (keyCode 53) dismisses accessibility overlay
+      if keyCode == 53 && AccessibilityOverlay.shared.isVisible() {
+        AccessibilityOverlay.shared.hide()
+        return true
+      }
+
       if event.flags.contains(.maskCmdRight) {
         // Another key pressed while holding right command - cancel overlay show
         KeyListener.shared.cancelOverlayShow()
