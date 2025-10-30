@@ -64,8 +64,8 @@ class AccessibilityOverlay: NSObject {
   // MARK: - Window Management
   
   private func showLoadingOverlay() {
-    // Get the screen containing the mouse cursor
-    let mouseLocation = NSEvent.mouseLocation
+    // Get mouse location to find which screen to show overlay on
+    let mouseLocation = NSEvent.mouseLocation  
     let targetScreen = NSScreen.screens.first(where: { $0.frame.contains(mouseLocation) }) ?? NSScreen.main
     
     guard let screen = targetScreen else {
@@ -73,17 +73,16 @@ class AccessibilityOverlay: NSObject {
       return
     }
     
-    let screenFrame = screen.frame
-    print("DEBUG: Creating overlay on screen: \(screenFrame), mouse at: \(mouseLocation)")
+    print("DEBUG: Creating overlay on screen: \(screen.frame), mouse at: \(mouseLocation)")
     
     let contentView = LoadingOverlayView(onDismiss: { [weak self] in
       self?.hide()
     })
     let hostingView = NSHostingView(rootView: contentView)
     
-    // Create window with a simple rect, then move it to the correct screen
+    // Create a borderless window covering the target screen
     let window = NSWindow(
-      contentRect: NSRect(x: 0, y: 0, width: 100, height: 100),
+      contentRect: screen.frame,
       styleMask: [.borderless, .nonactivatingPanel],
       backing: .buffered,
       defer: false
@@ -91,18 +90,15 @@ class AccessibilityOverlay: NSObject {
     
     window.contentView = hostingView
     window.backgroundColor = .clear
-    window.isOpaque = false
+    window.isOpaque = false  
     window.level = .floating
     window.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle]
     window.ignoresMouseEvents = false
-    
-    // Now set the frame to cover the entire screen
-    window.setFrame(screenFrame, display: false)
     window.orderFrontRegardless()
     
     self.window = window
     
-    print("DEBUG: Window positioned: \(window.frame), screen: \(window.screen?.frame ?? .zero)")
+    print("DEBUG: Window created at: \(window.frame)")
   }
   
 
@@ -113,16 +109,33 @@ class AccessibilityOverlay: NSObject {
     }
     
     let screenFrame = screen.frame
+    
+    // The screen with the menu bar is always index 0 (the primary display)
+    // This is the most reliable way to detect the primary screen
+    let isPrimaryScreen = (screen == NSScreen.screens[0])
+    
     print("DEBUG: Overlay on screen: \(screenFrame), found \(clickableElements.count) elements")
     
-    // Debug: print first few element positions
-    for (index, element) in clickableElements.prefix(3).enumerated() {
-      print("DEBUG: Element \(index + 1) '\(element.title)' at \(element.frame)")
+    // IMPORTANT: Coordinate system conversion issue
+    // - NSWindow.frame uses bottom-left origin (AppKit/Cocoa convention)
+    // - Accessibility API uses top-left origin (CGEvent convention)
+    // - We need to convert: viewPos = elementGlobalPos - windowGlobalPos, with Y-axis flip
+    let windowFrame = window.frame
+    let contentViewBounds = window.contentView?.bounds ?? CGRect.zero
+    
+    print("DEBUG: Window frame: \(windowFrame), contentView bounds: \(contentViewBounds)")
+    print("DEBUG: Screen frame: \(screenFrame), window screen: \(window.screen?.frame ?? .zero)")
+    
+    // Log element positions for debugging
+    for (index, element) in clickableElements.enumerated() {
+      print("DEBUG: Element \(index + 1) '\(element.title)' at global: \(element.frame)")
     }
     
     let contentView = AccessibilityOverlayView(
       elements: clickableElements,
-      screenFrame: screenFrame,
+      windowFrame: windowFrame,
+      windowHeight: windowFrame.height,
+      isPrimaryScreen: isPrimaryScreen,
       onElementClick: { [weak self] element in
         self?.clickElement(element)
       },
@@ -467,7 +480,9 @@ struct LoadingOverlayView: View {
 /// Main overlay view displaying clickable elements with numbered hints
 struct AccessibilityOverlayView: View {
   let elements: [ClickableElement]
-  let screenFrame: CGRect
+  let windowFrame: CGRect  // Window's frame in global screen coordinates
+  let windowHeight: CGFloat  // Window height for coordinate conversion
+  let isPrimaryScreen: Bool
   let onElementClick: (ClickableElement) -> Void
   let onDismiss: () -> Void
   
@@ -511,25 +526,48 @@ struct AccessibilityOverlayView: View {
     let hintSize: CGFloat = 28
     let isHovered = hoveredIndex == index
     
-    // Coordinate conversion:
-    // Accessibility API gives us: Y=0 at BOTTOM-left of primary display (screen coordinates)
-    // SwiftUI view: Y=0 at TOP-left of our window
-    // Our window: positioned at screenFrame
+    // COORDINATE SYSTEM CONVERSION:
+    // Accessibility API (kAXPositionAttribute) uses TOP-LEFT origin
+    // NSWindow.frame uses BOTTOM-LEFT origin  
+    // SwiftUI uses TOP-LEFT origin
+    //
+    // Conversion steps:
+    // 1. X: Direct conversion (same horizontal system)
+    // 2. Y: Convert window frame from bottom-left to top-left, then calculate relative position
+    let viewX = element.frame.minX - windowFrame.minX
     
-    // Step 1: X is straightforward - just subtract screen origin
-    let viewX = element.frame.minX - screenFrame.minX
+    // Y conversion: Both Accessibility API and SwiftUI use top-left origin
+    // NSWindow.frame uses bottom-left origin, so convert window top edge to top-left origin
+    // For multi-monitor setups, we need the total screen height of all screens combined
+    // or the height of the screen containing the window
+    // Accessibility API coordinates are relative to the top-left of the primary screen
+    // So we need to find what Y coordinate corresponds to the window's top in top-left origin
+    let primaryScreenHeight = NSScreen.screens.first?.frame.height ?? windowHeight
     
-    // Step 2: Y needs flipping
-    // Element is at screen Y (measured from bottom)
-    // We want view Y (measured from top of our window)
-    // screenFrame.maxY is the top of the screen in screen coordinates
-    // element.frame.minY is the bottom of the element in screen coordinates
-    let viewY = screenFrame.maxY - element.frame.minY - element.frame.height
+    // Convert window's top edge from bottom-left origin to top-left origin
+    // windowFrame.maxY is the top edge in bottom-left origin
+    // In top-left origin, this would be: screenHeight - windowFrame.maxY
+    let windowTopYInTopLeft = primaryScreenHeight - windowFrame.maxY  // Window top in top-left origin
+    let elementTopYInTopLeft = element.frame.minY  // Already in top-left origin
+    let elementYRelativeToWindow = elementTopYInTopLeft - windowTopYInTopLeft
     
-    // Only print first 3 hints to reduce console spam
-    if index <= 3 {
-      print("DEBUG: Hint \(index) '\(element.title)' - elem(\(element.frame.minX), \(element.frame.minY)), screen(\(screenFrame)), view(\(viewX), \(viewY))")
+    // Debug logging for coordinate conversion (first element only to avoid spam)
+    if index == 1 {
+      print("DEBUG: Coordinate conversion for element \(index) '\(element.title)':")
+      print("DEBUG:   Element frame (global, top-left origin): \(element.frame)")
+      print("DEBUG:   Window frame (global, bottom-left origin): \(windowFrame)")
+      print("DEBUG:   Primary screen height: \(primaryScreenHeight)")
+      print("DEBUG:   Window top in top-left origin: \(windowTopYInTopLeft)")
+      print("DEBUG:   Element top in top-left origin: \(elementTopYInTopLeft)")
+      print("DEBUG:   Element Y relative to window top: \(elementYRelativeToWindow)")
+      print("DEBUG:   Calculated viewX: \(viewX), viewY: \(elementYRelativeToWindow) (top-left origin)")
+      print("DEBUG:   Geometry size: \(geometrySize)")
     }
+    
+    // Use .position() for absolute positioning within the geometry
+    // .position() sets the CENTER of the view at the given coordinates
+    let posX = viewX + hintSize / 2  // Adjust for center-based positioning
+    let posY = elementYRelativeToWindow + hintSize / 2
     
     return ZStack {
       // Square background
@@ -542,7 +580,7 @@ struct AccessibilityOverlayView: View {
         .foregroundColor(.white)
     }
     .frame(width: hintSize, height: hintSize)
-    .position(x: viewX + hintSize/2, y: viewY + hintSize/2)
+    .position(x: posX, y: posY)
     .opacity(element.isEnabled ? 1.0 : 0.5)
     .contentShape(Rectangle())
     .onHover { isHovered in
@@ -556,9 +594,15 @@ struct AccessibilityOverlayView: View {
   
   /// Creates a tooltip showing element title and role when hovering over hint
   private func elementTooltip(for element: ClickableElement, geometrySize: CGSize) -> some View {
-    // Convert screen coordinates to view coordinates (same as hint)
-    let viewX = element.frame.minX - screenFrame.minX + 32  // Offset to the right
-    let viewY = screenFrame.maxY - element.frame.minY - element.frame.height
+    // Same coordinate conversion as hints, but offset 32px to the right
+    let viewX = element.frame.minX - windowFrame.minX + 32
+    
+    // Y-axis conversion (same as elementHint): Accessibility API (top-left) to SwiftUI (top-left)
+    let primaryScreenHeight = NSScreen.screens.first?.frame.height ?? windowHeight
+    let windowTopYInTopLeft = primaryScreenHeight - windowFrame.maxY
+    let elementTopYInTopLeft = element.frame.minY
+    let elementYRelativeToWindow = elementTopYInTopLeft - windowTopYInTopLeft
+    let viewY = elementYRelativeToWindow
     
     return VStack(alignment: .leading, spacing: 4) {
       Text(element.title)
