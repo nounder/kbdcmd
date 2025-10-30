@@ -264,7 +264,7 @@ struct AccessibilityOverlayView: View {
   
   // MARK: - View Components
   
-  /// Creates a numbered square hint badge at the top-left of an element
+  /// Creates a numbered square hint badge at the left edge, vertically centered on an element
   private func elementHint(
     for element: ClickableElement,
     index: Int,
@@ -283,6 +283,7 @@ struct AccessibilityOverlayView: View {
     // Conversion steps:
     // 1. X: Direct conversion (same horizontal system)
     // 2. Y: Convert window frame from bottom-left to top-left, then calculate relative position
+    // Position hint at the left edge horizontally, centered vertically
     let viewX = element.frame.minX - windowFrame.minX
     
     // Y conversion: Both Accessibility API and SwiftUI use top-left origin
@@ -297,8 +298,8 @@ struct AccessibilityOverlayView: View {
     // windowFrame.maxY is the top edge in bottom-left origin
     // In top-left origin, this would be: screenHeight - windowFrame.maxY
     let windowTopYInTopLeft = primaryScreenHeight - windowFrame.maxY  // Window top in top-left origin
-    let elementTopYInTopLeft = element.frame.minY  // Already in top-left origin
-    let elementYRelativeToWindow = elementTopYInTopLeft - windowTopYInTopLeft
+    let elementCenterYInTopLeft = element.frame.midY  // Element center in top-left origin
+    let elementCenterYRelativeToWindow = elementCenterYInTopLeft - windowTopYInTopLeft
     
     // Debug logging for coordinate conversion (first element only to avoid spam)
     if index == 1 {
@@ -307,16 +308,18 @@ struct AccessibilityOverlayView: View {
       print("DEBUG:   Window frame (global, bottom-left origin): \(windowFrame)")
       print("DEBUG:   Primary screen height: \(primaryScreenHeight)")
       print("DEBUG:   Window top in top-left origin: \(windowTopYInTopLeft)")
-      print("DEBUG:   Element top in top-left origin: \(elementTopYInTopLeft)")
-      print("DEBUG:   Element Y relative to window top: \(elementYRelativeToWindow)")
-      print("DEBUG:   Calculated viewX: \(viewX), viewY: \(elementYRelativeToWindow) (top-left origin)")
+      print("DEBUG:   Element center in top-left origin: \(elementCenterYInTopLeft)")
+      print("DEBUG:   Element center Y relative to window top: \(elementCenterYRelativeToWindow)")
+      print("DEBUG:   Calculated viewX: \(viewX), viewY: \(elementCenterYRelativeToWindow) (top-left origin)")
       print("DEBUG:   Geometry size: \(geometrySize)")
     }
     
     // Use .position() for absolute positioning within the geometry
     // .position() sets the CENTER of the view at the given coordinates
-    let posX = viewX + hintSize / 2  // Adjust for center-based positioning
-    let posY = elementYRelativeToWindow + hintSize / 2
+    // X: Position hint center at left edge (minX) by adding half hint size
+    // Y: Position hint center at element center (midY), no adjustment needed
+    let posX = viewX + hintSize / 2
+    let posY = elementCenterYRelativeToWindow
     
     return ZStack {
       // Square background - highlight if matching typed prefix
