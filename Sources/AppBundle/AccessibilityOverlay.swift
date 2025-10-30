@@ -1,5 +1,99 @@
 import SwiftUI
 import Cocoa
+import ObjectiveC
+
+// MARK: - Keyboard Input Coordinator
+
+/// ObservableObject that handles keyboard input for the overlay
+class KeyboardInputCoordinator: ObservableObject {
+  let elements: [ClickableElement]
+  let onElementClick: (ClickableElement) -> Void
+  let onDismiss: () -> Void
+  
+  @Published var typedPrefix: String = ""
+  
+  init(elements: [ClickableElement], onElementClick: @escaping (ClickableElement) -> Void, onDismiss: @escaping () -> Void) {
+    self.elements = elements
+    self.onElementClick = onElementClick
+    self.onDismiss = onDismiss
+  }
+  
+  /// Handles keyboard events for typing index numbers
+  func handleKeyEvent(_ event: NSEvent) -> Bool {
+    // ESC key dismisses overlay
+    if event.keyCode == 53 {  // ESC key
+      typedPrefix = ""
+      onDismiss()
+      return true
+    }
+    
+    // Backspace/Delete clears prefix
+    if event.keyCode == 51 || event.keyCode == 117 {  // Backspace or Delete
+      if !typedPrefix.isEmpty {
+        typedPrefix = String(typedPrefix.dropLast())
+      }
+      return true
+    }
+    
+    // Check if it's a digit (0-9)
+    if let characters = event.characters, let firstChar = characters.first,
+       firstChar.isNumber {
+      let newPrefix = typedPrefix + String(firstChar)
+      
+      // Check if any element matches this prefix
+      let hasMatch = elements.enumerated().contains { index, _ in
+        String(index + 1).hasPrefix(newPrefix)
+      }
+      
+      if hasMatch {
+        typedPrefix = newPrefix
+        
+        // Check if exactly one match after updating prefix
+        let matchingElements = getMatchingElements(for: typedPrefix)
+        
+        // Auto-click if exactly one match
+        if matchingElements.count == 1, let match = matchingElements.first {
+          // Use a small delay to allow visual feedback
+          DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+            self.onElementClick(match.element)
+          }
+        }
+        
+        return true
+      }
+    }
+    
+    return false
+  }
+  
+  func getMatchingElements(for prefix: String) -> [(index: Int, element: ClickableElement)] {
+    guard !prefix.isEmpty else {
+      return elements.enumerated().map { (index: $0.offset + 1, element: $0.element) }
+    }
+    
+    return elements.enumerated()
+      .filter { String($0.offset + 1).hasPrefix(prefix) }
+      .map { (index: $0.offset + 1, element: $0.element) }
+  }
+}
+
+// MARK: - Custom Window for Keyboard Input
+
+/// Custom NSWindow that captures keyboard events for the overlay
+class AccessibilityOverlayWindow: NSWindow {
+  var onKeyDown: ((NSEvent) -> Bool)?  // Returns true if event was handled
+  
+  override func keyDown(with event: NSEvent) {
+    if let onKeyDown = onKeyDown, onKeyDown(event) {
+      return  // Event was handled
+    }
+    super.keyDown(with: event)
+  }
+  
+  override var acceptsFirstResponder: Bool {
+    return true
+  }
+}
 
 // MARK: - Models
 
@@ -22,6 +116,7 @@ class AccessibilityOverlay: NSObject {
   
   private var window: NSWindow?
   private var clickableElements: [ClickableElement] = []
+  private var keyboardCoordinator: KeyboardInputCoordinator?
   
   private override init() {
     super.init()
@@ -55,10 +150,35 @@ class AccessibilityOverlay: NSObject {
     window?.orderOut(nil)
     window = nil
     clickableElements = []
+    keyboardCoordinator = nil
   }
   
   func isVisible() -> Bool {
     return window != nil
+  }
+  
+  /// Handles keyboard events from CGEvent tap (called from KeyListener)
+  func handleKeyboardEvent(keyCode: Int64, characters: String?) -> Bool {
+    guard let coordinator = keyboardCoordinator else { return false }
+    
+    // Create a synthetic NSEvent for the coordinator
+    // We need to convert CGEvent keyCode to NSEvent
+    let event = NSEvent.keyEvent(
+      with: .keyDown,
+      location: NSEvent.mouseLocation,
+      modifierFlags: [],
+      timestamp: ProcessInfo.processInfo.systemUptime,
+      windowNumber: window?.windowNumber ?? 0,
+      context: nil,
+      characters: characters ?? "",
+      charactersIgnoringModifiers: characters ?? "",
+      isARepeat: false,
+      keyCode: UInt16(keyCode)
+    )
+    
+    guard let event = event else { return false }
+    
+    return coordinator.handleKeyEvent(event)
   }
   
   // MARK: - Window Management
@@ -81,7 +201,7 @@ class AccessibilityOverlay: NSObject {
     let hostingView = NSHostingView(rootView: contentView)
     
     // Create a borderless window covering the target screen
-    let window = NSWindow(
+    let window = AccessibilityOverlayWindow(
       contentRect: screen.frame,
       styleMask: [.borderless, .nonactivatingPanel],
       backing: .buffered,
@@ -93,7 +213,7 @@ class AccessibilityOverlay: NSObject {
     window.isOpaque = false  
     window.level = .floating
     window.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle]
-    window.ignoresMouseEvents = false
+    window.ignoresMouseEvents = false  // Allow mouse events to pass through to SwiftUI
     window.orderFrontRegardless()
     
     self.window = window
@@ -131,11 +251,9 @@ class AccessibilityOverlay: NSObject {
       print("DEBUG: Element \(index + 1) '\(element.title)' at global: \(element.frame)")
     }
     
-    let contentView = AccessibilityOverlayView(
+    // Create keyboard event coordinator
+    let keyboardCoordinator = KeyboardInputCoordinator(
       elements: clickableElements,
-      windowFrame: windowFrame,
-      windowHeight: windowFrame.height,
-      isPrimaryScreen: isPrimaryScreen,
       onElementClick: { [weak self] element in
         self?.clickElement(element)
       },
@@ -143,7 +261,26 @@ class AccessibilityOverlay: NSObject {
         self?.hide()
       }
     )
-    let hostingView = NSHostingView(rootView: contentView)
+    self.keyboardCoordinator = keyboardCoordinator
+    
+    // Keyboard events are handled via CGEvent tap in KeyListener
+    // when overlay is visible
+    
+    // Create the overlay view with keyboard input handling
+    let overlayView = AccessibilityOverlayView(
+      elements: clickableElements,
+      windowFrame: windowFrame,
+      windowHeight: windowFrame.height,
+      isPrimaryScreen: isPrimaryScreen,
+      keyboardCoordinator: keyboardCoordinator,
+      onElementClick: { [weak self] element in
+        self?.clickElement(element)
+      },
+      onDismiss: { [weak self] in
+        self?.hide()
+      }
+    )
+    let hostingView = NSHostingView(rootView: overlayView)
     
     window.contentView = hostingView
     
@@ -483,10 +620,35 @@ struct AccessibilityOverlayView: View {
   let windowFrame: CGRect  // Window's frame in global screen coordinates
   let windowHeight: CGFloat  // Window height for coordinate conversion
   let isPrimaryScreen: Bool
+  let keyboardCoordinator: KeyboardInputCoordinator
   let onElementClick: (ClickableElement) -> Void
   let onDismiss: () -> Void
   
-  @State private var hoveredIndex: Int?
+  @ObservedObject private var keyboardInput: KeyboardInputCoordinator
+  
+  init(
+    elements: [ClickableElement],
+    windowFrame: CGRect,
+    windowHeight: CGFloat,
+    isPrimaryScreen: Bool,
+    keyboardCoordinator: KeyboardInputCoordinator,
+    onElementClick: @escaping (ClickableElement) -> Void,
+    onDismiss: @escaping () -> Void
+  ) {
+    self.elements = elements
+    self.windowFrame = windowFrame
+    self.windowHeight = windowHeight
+    self.isPrimaryScreen = isPrimaryScreen
+    self.keyboardCoordinator = keyboardCoordinator
+    self.onElementClick = onElementClick
+    self.onDismiss = onDismiss
+    self._keyboardInput = ObservedObject(wrappedValue: keyboardCoordinator)
+  }
+  
+  // Computed properties for matching elements
+  private var matchingElements: [(index: Int, element: ClickableElement)] {
+    keyboardCoordinator.getMatchingElements(for: keyboardCoordinator.typedPrefix)
+  }
   
   var body: some View {
     GeometryReader { geometry in
@@ -502,14 +664,23 @@ struct AccessibilityOverlayView: View {
         
         // Numbered hint badges for each element
         ForEach(Array(elements.enumerated()), id: \.element.id) { index, element in
-          elementHint(for: element, index: index + 1, geometrySize: geometry.size)
+          let elementIndex = index + 1
+          let typedPrefix = keyboardCoordinator.typedPrefix
+          let isMatching = matchingElements.contains { $0.index == elementIndex }
+          let matchedPrefixLength = typedPrefix.isEmpty ? 0 : (String(elementIndex).hasPrefix(typedPrefix) ? typedPrefix.count : 0)
+          
+          elementHint(
+            for: element,
+            index: elementIndex,
+            geometrySize: geometry.size,
+            isMatching: isMatching,
+            matchedPrefixLength: matchedPrefixLength
+          )
         }
         
-        // Tooltips layer (rendered on top of hints)
-        ForEach(Array(elements.enumerated()), id: \.element.id) { index, element in
-          if hoveredIndex == index + 1 {
-            elementTooltip(for: element, geometrySize: geometry.size)
-          }
+        // Show typed prefix indicator
+        if !keyboardCoordinator.typedPrefix.isEmpty {
+          typedPrefixIndicator
         }
         
         // Instructions banner
@@ -522,9 +693,15 @@ struct AccessibilityOverlayView: View {
   // MARK: - View Components
   
   /// Creates a numbered square hint badge at the top-left of an element
-  private func elementHint(for element: ClickableElement, index: Int, geometrySize: CGSize) -> some View {
+  private func elementHint(
+    for element: ClickableElement,
+    index: Int,
+    geometrySize: CGSize,
+    isMatching: Bool,
+    matchedPrefixLength: Int
+  ) -> some View {
     let hintSize: CGFloat = 28
-    let isHovered = hoveredIndex == index
+    let indexString = String(index)
     
     // COORDINATE SYSTEM CONVERSION:
     // Accessibility API (kAXPositionAttribute) uses TOP-LEFT origin
@@ -570,61 +747,40 @@ struct AccessibilityOverlayView: View {
     let posY = elementYRelativeToWindow + hintSize / 2
     
     return ZStack {
-      // Square background
+      // Square background - highlight if matching typed prefix
       RoundedRectangle(cornerRadius: 4)
-        .fill(isHovered ? Color.blue : Color.green)
+        .fill(isMatching ? Color.orange : Color.green)
+        .overlay(
+          RoundedRectangle(cornerRadius: 4)
+            .stroke(isMatching ? Color.white : Color.clear, lineWidth: 2)
+        )
       
-      // Index number
-      Text("\(index)")
-        .font(.system(size: 13, weight: .bold))
-        .foregroundColor(.white)
+      // Index number with highlighting for matched prefix
+      if matchedPrefixLength > 0 && matchedPrefixLength < indexString.count {
+        // Show matched prefix in different color
+        HStack(spacing: 0) {
+          Text(String(indexString.prefix(matchedPrefixLength)))
+            .font(.system(size: 13, weight: .bold))
+            .foregroundColor(.white)
+          
+          Text(String(indexString.dropFirst(matchedPrefixLength)))
+            .font(.system(size: 13, weight: .bold))
+            .foregroundColor(.yellow)
+        }
+      } else {
+        Text(indexString)
+          .font(.system(size: 13, weight: .bold))
+          .foregroundColor(.white)
+      }
     }
     .frame(width: hintSize, height: hintSize)
     .position(x: posX, y: posY)
     .opacity(element.isEnabled ? 1.0 : 0.5)
     .contentShape(Rectangle())
-    .onHover { isHovered in
-      hoveredIndex = isHovered ? index : nil
-    }
     .onTapGesture {
       print("DEBUG: Tapped hint \(index) for '\(element.title)'")
       onElementClick(element)
     }
-  }
-  
-  /// Creates a tooltip showing element title and role when hovering over hint
-  private func elementTooltip(for element: ClickableElement, geometrySize: CGSize) -> some View {
-    // Same coordinate conversion as hints, but offset 32px to the right
-    let viewX = element.frame.minX - windowFrame.minX + 32
-    
-    // Y-axis conversion (same as elementHint): Accessibility API (top-left) to SwiftUI (top-left)
-    let primaryScreenHeight = NSScreen.screens.first?.frame.height ?? windowHeight
-    let windowTopYInTopLeft = primaryScreenHeight - windowFrame.maxY
-    let elementTopYInTopLeft = element.frame.minY
-    let elementYRelativeToWindow = elementTopYInTopLeft - windowTopYInTopLeft
-    let viewY = elementYRelativeToWindow
-    
-    return VStack(alignment: .leading, spacing: 4) {
-      Text(element.title)
-        .font(.system(size: 11, weight: .medium))
-        .foregroundColor(.white)
-        .lineLimit(3)
-        .fixedSize(horizontal: false, vertical: true)
-      
-      Text(roleDisplayName(element.role))
-        .font(.system(size: 9))
-        .foregroundColor(.white.opacity(0.8))
-    }
-    .padding(.horizontal, 10)
-    .padding(.vertical, 6)
-    .frame(maxWidth: 250, alignment: .leading)
-    .background(
-      RoundedRectangle(cornerRadius: 6)
-        .fill(Color.black.opacity(0.95))
-        .shadow(color: .black.opacity(0.5), radius: 6, x: 2, y: 2)
-    )
-    .position(x: viewX, y: viewY)
-    .allowsHitTesting(false)  // Don't intercept clicks
   }
   
   /// Instructions banner at the top of the overlay
@@ -632,19 +788,49 @@ struct AccessibilityOverlayView: View {
     VStack {
       HStack {
         Spacer()
-        Text("Click numbered hint to open link • Hover to see link title • Press ESC or click background to dismiss")
-          .font(.system(size: 14, weight: .medium))
-          .foregroundColor(.white)
-          .padding(.horizontal, 16)
-          .padding(.vertical, 8)
-          .background(
-            RoundedRectangle(cornerRadius: 8)
-              .fill(Color.black.opacity(0.8))
-          )
-          .padding()
+        VStack(spacing: 4) {
+          Text("Type number to select • Click hint to open link • Press ESC to dismiss")
+            .font(.system(size: 14, weight: .medium))
+            .foregroundColor(.white)
+          
+          if !keyboardCoordinator.typedPrefix.isEmpty {
+            Text("Typed: \(keyboardCoordinator.typedPrefix)")
+              .font(.system(size: 12, weight: .semibold))
+              .foregroundColor(.yellow)
+          }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
+        .background(
+          RoundedRectangle(cornerRadius: 8)
+            .fill(Color.black.opacity(0.8))
+        )
+        .padding()
         Spacer()
       }
       Spacer()
+    }
+  }
+  
+  /// Typed prefix indicator showing what the user has typed so far
+  private var typedPrefixIndicator: some View {
+    VStack {
+      Spacer()
+      HStack {
+        Spacer()
+        Text("Typed: \(keyboardCoordinator.typedPrefix)")
+          .font(.system(size: 24, weight: .bold))
+          .foregroundColor(.yellow)
+          .padding(.horizontal, 20)
+          .padding(.vertical, 12)
+          .background(
+            RoundedRectangle(cornerRadius: 8)
+              .fill(Color.black.opacity(0.9))
+              .shadow(color: .black.opacity(0.5), radius: 8, x: 0, y: 4)
+          )
+          .padding(.bottom, 100)
+        Spacer()
+      }
     }
   }
   

@@ -67,6 +67,15 @@ class KeyListener {
         AccessibilityOverlay.shared.hide()
         return true
       }
+      
+      // If accessibility overlay is visible, handle keyboard events for overlay
+      if AccessibilityOverlay.shared.isVisible() {
+        let char = KeyListener.keyCodeToString(keyCode: Int(keyCode), event: event)
+        if AccessibilityOverlay.shared.handleKeyboardEvent(keyCode: keyCode, characters: char) {
+          return true  // Event was handled by overlay
+        }
+        return false  // Let other events pass through
+      }
 
       if event.flags.contains(.maskCmdRight) {
         // Another key pressed while holding right command - cancel overlay show
