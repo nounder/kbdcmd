@@ -222,6 +222,14 @@ struct AccessibilityOverlayView: View {
     keyboardCoordinator.getMatchingElements(for: keyboardCoordinator.typedPrefix)
   }
   
+  // Elements to display: all if no prefix, only matching if prefix exists
+  private var elementsToDisplay: [(index: Int, element: ClickableElement)] {
+    if keyboardCoordinator.typedPrefix.isEmpty {
+      return elements.enumerated().map { (index: $0.offset + 1, element: $0.element) }
+    }
+    return matchingElements
+  }
+  
   var body: some View {
     GeometryReader { geometry in
       ZStack {
@@ -234,9 +242,10 @@ struct AccessibilityOverlayView: View {
             onDismiss()
           }
         
-        // Numbered hint badges for each element
-        ForEach(Array(elements.enumerated()), id: \.element.id) { index, element in
-          let elementIndex = index + 1
+        // Numbered hint badges for each element (only show matching ones when prefix is typed)
+        ForEach(Array(elementsToDisplay), id: \.element.id) { item in
+          let elementIndex = item.index
+          let element = item.element
           let typedPrefix = keyboardCoordinator.typedPrefix
           let isMatching = matchingElements.contains { $0.index == elementIndex }
           let matchedPrefixLength = typedPrefix.isEmpty ? 0 : (String(elementIndex).hasPrefix(typedPrefix) ? typedPrefix.count : 0)
