@@ -107,18 +107,25 @@ class AXHelpers {
     
     roleStats[role, default: 0] += 1
     
-    // Only fetch position/size if this is a link, button, or scroll container
+    // Only fetch position/size if this is a link, button, scroll container, or potentially a tab button
     let isLink = role == "AXLink"
     let isButton = role == "AXButton"
+    let isRadioButton = role == "AXRadioButton"
     let isScrollContainer = role == "AXScrollArea" || role == "AXWebArea"
+    
+    // Check if this is a tab button (can have role AXButton or AXRadioButton)
+    let isTab = isTabButton(element: element)
     
     // Debug logging for button detection
     if isButton {
       print("DEBUG: Found button element with role: \(role)")
     }
+    if isTab {
+      print("DEBUG: Found tab button with role: \(role)")
+    }
     
-    guard isLink || isButton || isScrollContainer else {
-      // Skip fetching attributes for non-link, non-button, non-container elements
+    guard isLink || isButton || isTab || isScrollContainer else {
+      // Skip fetching attributes for non-link, non-button, non-tab, non-container elements
       processChildren(
         of: element,
         allScreenBounds: allScreenBounds,
@@ -145,28 +152,29 @@ class AXHelpers {
       size: attributes.size
     )
     
-    // Check if this is a clickable link or button that should be displayed
-    if (isLink || isButton),
+    // Check if this is a clickable link, button, or tab that should be displayed
+    if (isLink || isButton || isTab),
        let position = attributes.position, 
        let size = attributes.size, 
        isValidElementSize(size) {
       
       // Filter out window control buttons (close, minimize, full screen)
-      if isButton && isWindowControlButton(element: element) {
+      // But always include tab buttons
+      if isButton && !isTabButton(element: element) && isWindowControlButton(element: element) {
         print("DEBUG: Filtering out window control button")
         // Don't process children of window control buttons
         return
       }
       
       let frame = CGRect(x: position.x, y: position.y, width: size.width, height: size.height)
-      let defaultTitle = isLink ? "Link" : "Button"
+      let defaultTitle = isLink ? "Link" : (isTab ? "Tab" : "Button")
       let displayTitle = attributes.title ?? getElementDescription(element) ?? defaultTitle
       let trimmedTitle = displayTitle.trimmingCharacters(in: .whitespacesAndNewlines)
       let finalTitle = trimmedTitle.isEmpty ? defaultTitle : trimmedTitle
       
-      // Debug logging for buttons
-      if isButton {
-        print("DEBUG: Processing button '\(finalTitle)' at frame: \(frame), enabled: \(attributes.enabled ?? true)")
+      // Debug logging for buttons and tabs
+      if isButton || isTab {
+        print("DEBUG: Processing \(isTab ? "tab" : "button") '\(finalTitle)' at frame: \(frame), enabled: \(attributes.enabled ?? true)")
         if let container = currentContainerFrame {
           print("DEBUG: Container frame: \(container)")
         } else {
@@ -181,8 +189,8 @@ class AXHelpers {
                          containerFrame: currentContainerFrame,
                          title: finalTitle) {
         
-        if isButton {
-          print("DEBUG: Adding button '\(finalTitle)' to clickable elements")
+        if isButton || isTab {
+          print("DEBUG: Adding \(isTab ? "tab" : "button") '\(finalTitle)' to clickable elements")
         }
         
         let clickable = ClickableElement(
@@ -193,13 +201,13 @@ class AXHelpers {
           isEnabled: attributes.enabled ?? true
         )
         clickableElements.append(clickable)
-      } else if isButton {
-        print("DEBUG: Button '\(finalTitle)' filtered out by visibility check")
+      } else if isButton || isTab {
+        print("DEBUG: \(isTab ? "Tab" : "Button") '\(finalTitle)' filtered out by visibility check")
       }
-    } else if isButton {
+    } else if isButton || isTab {
       let positionStr = attributes.position.map { "\($0)" } ?? "nil"
       let sizeStr = attributes.size.map { "\($0)" } ?? "nil"
-      print("DEBUG: Button filtered out - missing position/size or invalid size. position: \(positionStr), size: \(sizeStr)")
+      print("DEBUG: \(isTab ? "Tab" : "Button") filtered out - missing position/size or invalid size. position: \(positionStr), size: \(sizeStr)")
     }
     
     // Recursively process all children
@@ -216,6 +224,23 @@ class AXHelpers {
   }
   
   // MARK: - Helper Methods
+  
+  /// Checks if an element is a tab button (should be included in clickable elements)
+  private static func isTabButton(element: AXUIElement) -> Bool {
+    // Check subrole attribute for AXTabButton
+    if let subrole = element.get(Ax.subroleAttr), subrole == "AXTabButton" {
+      return true
+    }
+    
+    // Check Automation Type attribute (used by some applications)
+    var automationType: AnyObject?
+    if AXUIElementCopyAttributeValue(element, "AXAutomationType" as CFString, &automationType) == .success,
+       let autoType = automationType as? String, autoType == "Tab" {
+      return true
+    }
+    
+    return false
+  }
   
   /// Checks if an element is a window control button (close, minimize, full screen)
   /// These buttons should be excluded from clickable element selection
