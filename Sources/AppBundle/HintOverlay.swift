@@ -172,7 +172,7 @@ struct LoadingOverlayView: View {
           .scaleEffect(1.5)
           .progressViewStyle(CircularProgressViewStyle(tint: .white))
         
-        Text("Scanning for links...")
+        Text("Scanning for links and buttons...")
           .font(.system(size: 16, weight: .medium))
           .foregroundColor(.white)
       }
@@ -361,7 +361,7 @@ struct AccessibilityOverlayView: View {
       HStack {
         Spacer()
         VStack(spacing: 4) {
-          Text("Type number to select • Click hint to open link • Press ESC to dismiss")
+          Text("Type number to select • Click hint to activate • Press ESC to dismiss")
             .font(.system(size: 14, weight: .medium))
             .foregroundColor(.white)
           
@@ -408,25 +408,5 @@ struct AccessibilityOverlayView: View {
   
   // MARK: - Helpers
   
-  /// Converts accessibility role names to human-readable display names
-  private func roleDisplayName(_ role: String) -> String {
-    let mapping: [String: String] = [
-      kAXButtonRole: "Button",
-      kAXCheckBoxRole: "Checkbox",
-      kAXRadioButtonRole: "Radio",
-      kAXPopUpButtonRole: "Popup",
-      kAXMenuButtonRole: "Menu",
-      "AXLink": "Link",
-      "AXTab": "Tab",
-      kAXStaticTextRole: "Text",
-      kAXTextFieldRole: "Text Field",
-      kAXTextAreaRole: "Text Area",
-      kAXComboBoxRole: "Combo Box",
-      kAXSliderRole: "Slider",
-      kAXIncrementorRole: "Stepper",
-      kAXDisclosureTriangleRole: "Disclosure",
-    ]
-    return mapping[role] ?? role.replacingOccurrences(of: "AX", with: "")
-  }
 }
 

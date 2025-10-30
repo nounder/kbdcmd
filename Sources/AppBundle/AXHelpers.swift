@@ -32,6 +32,18 @@ class AXHelpers {
       return []
     }
     
+    // Get window frame for visibility checking
+    let windowFrame: CGRect?
+    if let windowPosition = focusedWindow.get(Ax.topLeftCornerAttr),
+       let windowSize = focusedWindow.get(Ax.sizeAttr) {
+      // Convert window position from top-left origin to bottom-left origin for NSWindow
+      let primaryScreenHeight = NSScreen.screens.first?.frame.height ?? 0
+      let windowYBottomLeft = primaryScreenHeight - windowPosition.y - windowSize.height
+      windowFrame = CGRect(x: windowPosition.x, y: windowYBottomLeft, width: windowSize.width, height: windowSize.height)
+    } else {
+      windowFrame = nil
+    }
+    
     // Support multiple monitors by checking all screen bounds
     let allScreenBounds = NSScreen.screens.map { $0.frame }
     
@@ -42,6 +54,7 @@ class AXHelpers {
     collectElementsRecursively(
       from: focusedWindow,
       allScreenBounds: allScreenBounds,
+      windowFrame: windowFrame,
       containerFrame: nil,
       roleStats: &roleStats,
       elementCount: &elementCount,
@@ -63,6 +76,7 @@ class AXHelpers {
   private static func collectElementsRecursively(
     from element: AXUIElement,
     allScreenBounds: [CGRect],
+    windowFrame: CGRect?,
     containerFrame: CGRect?,
     roleStats: inout [String: Int],
     elementCount: inout Int,
@@ -81,6 +95,7 @@ class AXHelpers {
       processChildren(
         of: element,
         allScreenBounds: allScreenBounds,
+        windowFrame: windowFrame,
         containerFrame: containerFrame,
         roleStats: &roleStats,
         elementCount: &elementCount,
@@ -92,15 +107,22 @@ class AXHelpers {
     
     roleStats[role, default: 0] += 1
     
-    // Only fetch position/size if this is a link or scroll container
+    // Only fetch position/size if this is a link, button, or scroll container
     let isLink = role == "AXLink"
+    let isButton = role == "AXButton"
     let isScrollContainer = role == "AXScrollArea" || role == "AXWebArea"
     
-    guard isLink || isScrollContainer else {
-      // Skip fetching attributes for non-link, non-container elements
+    // Debug logging for button detection
+    if isButton {
+      print("DEBUG: Found button element with role: \(role)")
+    }
+    
+    guard isLink || isButton || isScrollContainer else {
+      // Skip fetching attributes for non-link, non-button, non-container elements
       processChildren(
         of: element,
         allScreenBounds: allScreenBounds,
+        windowFrame: windowFrame,
         containerFrame: containerFrame,
         roleStats: &roleStats,
         elementCount: &elementCount,
@@ -110,7 +132,7 @@ class AXHelpers {
       return
     }
     
-    // OPTIMIZATION: Batch fetch common attributes for links and scroll containers
+    // OPTIMIZATION: Batch fetch common attributes for links, buttons, and scroll containers
     let attributes = getBatchAttributes(element: element)
     
     // Update container bounds when we encounter scroll areas
@@ -123,22 +145,45 @@ class AXHelpers {
       size: attributes.size
     )
     
-    // Check if this is a clickable link that should be displayed
-    if isLink,
+    // Check if this is a clickable link or button that should be displayed
+    if (isLink || isButton),
        let position = attributes.position, 
        let size = attributes.size, 
        isValidElementSize(size) {
       
+      // Filter out window control buttons (close, minimize, full screen)
+      if isButton && isWindowControlButton(element: element) {
+        print("DEBUG: Filtering out window control button")
+        // Don't process children of window control buttons
+        return
+      }
+      
       let frame = CGRect(x: position.x, y: position.y, width: size.width, height: size.height)
-      let displayTitle = attributes.title ?? getElementDescription(element) ?? "Link"
+      let defaultTitle = isLink ? "Link" : "Button"
+      let displayTitle = attributes.title ?? getElementDescription(element) ?? defaultTitle
       let trimmedTitle = displayTitle.trimmingCharacters(in: .whitespacesAndNewlines)
-      let finalTitle = trimmedTitle.isEmpty ? "Link" : trimmedTitle
+      let finalTitle = trimmedTitle.isEmpty ? defaultTitle : trimmedTitle
+      
+      // Debug logging for buttons
+      if isButton {
+        print("DEBUG: Processing button '\(finalTitle)' at frame: \(frame), enabled: \(attributes.enabled ?? true)")
+        if let container = currentContainerFrame {
+          print("DEBUG: Container frame: \(container)")
+        } else {
+          print("DEBUG: Container frame: nil")
+        }
+      }
       
       // Apply visibility filters
       if isElementVisible(frame: frame, 
-                         screenBounds: allScreenBounds, 
+                         screenBounds: allScreenBounds,
+                         windowFrame: windowFrame,
                          containerFrame: currentContainerFrame,
                          title: finalTitle) {
+        
+        if isButton {
+          print("DEBUG: Adding button '\(finalTitle)' to clickable elements")
+        }
         
         let clickable = ClickableElement(
           axElement: element,
@@ -148,13 +193,20 @@ class AXHelpers {
           isEnabled: attributes.enabled ?? true
         )
         clickableElements.append(clickable)
+      } else if isButton {
+        print("DEBUG: Button '\(finalTitle)' filtered out by visibility check")
       }
+    } else if isButton {
+      let positionStr = attributes.position.map { "\($0)" } ?? "nil"
+      let sizeStr = attributes.size.map { "\($0)" } ?? "nil"
+      print("DEBUG: Button filtered out - missing position/size or invalid size. position: \(positionStr), size: \(sizeStr)")
     }
     
     // Recursively process all children
     processChildren(
       of: element,
       allScreenBounds: allScreenBounds,
+      windowFrame: windowFrame,
       containerFrame: currentContainerFrame,
       roleStats: &roleStats,
       elementCount: &elementCount,
@@ -164,6 +216,46 @@ class AXHelpers {
   }
   
   // MARK: - Helper Methods
+  
+  /// Checks if an element is a window control button (close, minimize, full screen)
+  /// These buttons should be excluded from clickable element selection
+  private static func isWindowControlButton(element: AXUIElement) -> Bool {
+    // Check subrole attribute (most reliable indicator)
+    if let subrole = element.get(Ax.subroleAttr) {
+      let windowControlSubroles = [
+        "AXCloseButton",
+        "AXMinimizeButton", 
+        "AXZoomButton"
+      ]
+      if windowControlSubroles.contains(subrole) {
+        return true
+      }
+    }
+    
+    // Check description attribute for window control button keywords
+    var description: AnyObject?
+    if AXUIElementCopyAttributeValue(element, kAXDescriptionAttribute as CFString, &description) == .success,
+       let desc = description as? String {
+      let descLower = desc.lowercased()
+      let windowControlKeywords = ["close button", "minimize button", "full screen button", "zoom button"]
+      if windowControlKeywords.contains(where: { descLower.contains($0) }) {
+        return true
+      }
+    }
+    
+    // Check role description (sometimes shows "close button", "minimize button", etc.)
+    var roleDescription: AnyObject?
+    if AXUIElementCopyAttributeValue(element, kAXRoleDescriptionAttribute as CFString, &roleDescription) == .success,
+       let roleDesc = roleDescription as? String {
+      let roleDescLower = roleDesc.lowercased()
+      let windowControlKeywords = ["close button", "minimize button", "full screen button", "zoom button"]
+      if windowControlKeywords.contains(where: { roleDescLower.contains($0) }) {
+        return true
+      }
+    }
+    
+    return false
+  }
   
   /// Lightweight struct for batch-fetched accessibility attributes
   /// Value type with zero runtime overhead compared to tuples
@@ -246,7 +338,15 @@ class AXHelpers {
   }
   
   /// Updates the container frame when encountering scroll areas
-  /// Nested containers are intersected to get the most restrictive visible area
+  /// 
+  /// Solution 2 (current): Use container's position+size as visible viewport
+  /// - Assumes position+size represents the visible viewport bounds
+  /// - Filters elements that intersect with this viewport
+  /// 
+  /// Alternative Solution 1: Get scroll offsets and calculate visible viewport
+  /// - Could fetch kAXHorizontalScrollBar/kAXVerticalScrollBar attributes
+  /// - Or track scroll position changes over time
+  /// - Calculate visible bounds = container position + scroll offset to container position + size
   private static func updateContainerFrame(
     existingContainer: CGRect?,
     element: AXUIElement,
@@ -261,18 +361,26 @@ class AXHelpers {
       return existingContainer
     }
     
-    let frame = CGRect(x: position.x, y: position.y, width: size.width, height: size.height)
-    print("DEBUG: Found \(role) container at \(frame)")
+    // For scroll containers, position + size should represent the VISIBLE viewport
+    // However, if coordinates are document-relative (negative), we need to calculate
+    // the visible viewport differently. Try to get scroll position if available.
+    
+    // Try to get scroll position (Solution 1 approach - not fully implemented)
+    // Some browsers expose scroll position via scroll bar elements or other attributes
+    // For now, we'll use position+size as visible viewport (Solution 2)
+    
+    let visibleViewport = CGRect(x: position.x, y: position.y, width: size.width, height: size.height)
+    print("DEBUG: Found \(role) container - visible viewport: \(visibleViewport)")
     
     // If we already have a parent container, intersect to get visible area
     // This handles nested scroll areas correctly
     if let existingContainer = existingContainer {
-      let intersection = existingContainer.intersection(frame)
+      let intersection = existingContainer.intersection(visibleViewport)
       print("DEBUG: Intersected with existing container: \(intersection)")
       return intersection
     }
     
-    return frame
+    return visibleViewport
   }
   
   /// Checks if element size is valid (positive width and height)
@@ -289,52 +397,61 @@ class AXHelpers {
     return trimmedTitle.isEmpty ? "Link" : trimmedTitle
   }
   
-  /// Checks if element is visible based on screen bounds and container clipping
+  /// Checks if element is visible based on screen bounds and scroll container viewports
   ///
-  /// An element is visible if:
-  /// 1. It intersects with at least one screen (multi-monitor support)
-  /// 2. If inside a scroll container, it must intersect with that container's visible bounds
+  /// For web elements, coordinates are relative to the document content area, not screen.
+  /// We check if elements intersect with:
+  /// 1. Screen bounds (for native elements)
+  /// 2. Scroll container's visible viewport (for web elements)
   ///
   /// - Parameters:
-  ///   - frame: Element's frame in screen coordinates
+  ///   - frame: Element's frame (may be in screen or document coordinates)
   ///   - screenBounds: Array of all screen bounds
-  ///   - containerFrame: Optional container bounds (nil if not in a scroll area)
+  ///   - windowFrame: Window frame in screen coordinates (for web content visibility)
+  ///   - containerFrame: Optional container visible viewport bounds (for web areas)
   ///   - title: Element title (for debug logging)
   /// - Returns: true if element should be displayed
   private static func isElementVisible(
     frame: CGRect,
     screenBounds: [CGRect],
+    windowFrame: CGRect?,
     containerFrame: CGRect?,
     title: String
   ) -> Bool {
-    // Filter 1: Must be on at least one screen
+    // First check: Is element on screen (for elements with screen coordinates)
     let isOnScreen = screenBounds.contains { $0.intersects(frame) }
     
-    guard isOnScreen else {
-      print("DEBUG: Filtering out '\(title)' - off screen at \(frame)")
-      return false
+    if isOnScreen {
+      print("DEBUG: Including '\(title)' - element at \(frame) is on screen")
+      return true
     }
     
-    // Filter 2: Must be within scroll container's visible bounds (if any)
-    if let container = containerFrame {
-      let intersects = container.intersects(frame)
-      if !intersects {
-        print("DEBUG: Filtering out '\(title)' - element at \(frame) outside container \(container)")
+    // Second check: For web elements, check if they intersect with the visible viewport
+    if let containerViewport = containerFrame {
+      // Element is inside a web/scroll container
+      // The containerFrame represents the visible viewport of the scroll container
+      // Check if the element intersects with this visible viewport
+      let intersectsViewport = containerViewport.intersects(frame)
+      
+      if intersectsViewport {
+        print("DEBUG: Including '\(title)' - web element at \(frame) intersects visible viewport \(containerViewport)")
+        return true
       } else {
-        print("DEBUG: Including '\(title)' - element at \(frame) inside container \(container)")
+        print("DEBUG: Filtering out '\(title)' - web element at \(frame) outside visible viewport \(containerViewport)")
+        return false
       }
-      return intersects
     }
     
-    // No container restrictions, element is visible
-    print("DEBUG: No container for element at \(frame), including by default")
-    return true
+    // No container and not on screen = not visible
+    print("DEBUG: Filtering out '\(title)' - off screen at \(frame)")
+    return false
   }
   
   /// Processes all children of an element recursively
   private static func processChildren(
     of element: AXUIElement,
     allScreenBounds: [CGRect],
+    windowFrame: CGRect?,
     containerFrame: CGRect?,
     roleStats: inout [String: Int],
     elementCount: inout Int,
@@ -351,6 +468,7 @@ class AXHelpers {
       collectElementsRecursively(
         from: child,
         allScreenBounds: allScreenBounds,
+        windowFrame: windowFrame,
         containerFrame: containerFrame,
         roleStats: &roleStats,
         elementCount: &elementCount,
