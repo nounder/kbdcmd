@@ -194,12 +194,6 @@ class KeyListener {
         SmoothScrollManager.shared.stop()
       }
 
-      // Stop scrolling when J or K keys are released
-      if keyCode == 38 || keyCode == 40 {  // J or K
-        SmoothScrollManager.shared.stop()
-        print("DEBUG: Scroll key released (keyCode=\(keyCode)), stopping scroll")
-      }
-
       return false
     }
 
@@ -228,20 +222,6 @@ class KeyListener {
           return true  // Event was handled by overlay
         }
         return false  // Let other events pass through
-      }
-
-      // Handle CapsLock + J/K for smooth scrolling
-      // Use our tracked state since CapsLock is disabled and maskAlphaShift won't be set
-      if KeyListener.shared.isCapsLockPressed {
-        if keyCode == 38 {  // J - scroll down
-          print("DEBUG: Scrolling down")
-          SmoothScrollManager.shared.scrollUnits(-10)  // 1 unit = ~800 pixels with 4x sensitivity
-          return true
-        } else if keyCode == 40 {  // K - scroll up
-          print("DEBUG: Scrolling up")
-          SmoothScrollManager.shared.scrollUnits(10)  // 1 unit = ~800 pixels with 4x sensitivity
-          return true
-        }
       }
 
       // Fast array lookup: keyCode → Key (single operation!)
