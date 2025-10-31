@@ -10,8 +10,10 @@ class KeyListener {
   private var lastKeyPressTime: Date = Date()
   private let snippetManager = SnippetManager()
   private var overlayShowTimer: Timer?
+  private var isCapsLockPressed: Bool = false
 
   init() {
+    print("DEBUG: KeyListener initializing...")
     // Listen for keyDown, keyUp, and flagsChanged events (for modifier keys like right command)
     let eventMask = (1 << CGEventType.keyDown.rawValue) | (1 << CGEventType.keyUp.rawValue) | (1 << CGEventType.flagsChanged.rawValue)
     guard
@@ -28,7 +30,7 @@ class KeyListener {
         userInfo: nil
       )
     else {
-      print("Failed to create event tap")
+      print("ERROR: Failed to create event tap")
       return
     }
 
@@ -36,12 +38,28 @@ class KeyListener {
     let runLoopSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, eventTap, 0)
     CFRunLoopAddSource(CFRunLoopGetCurrent(), runLoopSource, .commonModes)
     CGEvent.tapEnable(tap: eventTap, enable: true)
+    print("DEBUG: KeyListener initialized, event tap enabled")
   }
 
   static func handleEvent(proxy: CGEventTapProxy, type: CGEventType, event: CGEvent) -> Bool {
+    let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
+    
+    // Debug: Print all events to see what we're receiving
+    // Output goes to /tmp/kbcmd.stdout.log when running as daemon
+    if type == .keyDown || type == .keyUp || type == .flagsChanged {
+      // Log all flagsChanged events to see what we're getting
+      if type == .flagsChanged {
+        print("DEBUG: flagsChanged event - keyCode=\(keyCode), flags=\(event.flags.rawValue), maskAlphaShift=\(event.flags.contains(.maskAlphaShift))")
+      }
+      // Only log CapsLock-related events and J/K to reduce noise
+      // CapsLock can be keyCode 57 (standard) or 62 (when disabled)
+      if keyCode == 57 || keyCode == 62 || keyCode == 38 || keyCode == 40 {
+        print("DEBUG: Event type=\(type.rawValue), keyCode=\(keyCode), flags=\(event.flags.rawValue)")
+      }
+    }
+    
     // rcmd is pressed
     if type == .flagsChanged {
-      let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
       
       // Right Command key code is 54
       if keyCode == 54 {
@@ -55,12 +73,53 @@ class KeyListener {
         }
       }
       
+      // CapsLock detection - handle both keyCode 57 (standard) and 62 (when disabled)
+      // CapsLock can have different keyCodes depending on keyboard type and system settings
+      if keyCode == 57 || keyCode == 62 {
+        // Determine if this is press or release based on flags value
+        // For keyCode 57: check maskAlphaShift flag (standard CapsLock)
+        // For keyCode 62: check flags value (when disabled, maskAlphaShift won't be set)
+        let isPressed = keyCode == 57 ? event.flags.contains(.maskAlphaShift) : event.flags.rawValue > 256
+        KeyListener.shared.isCapsLockPressed = isPressed
+        print("DEBUG: CapsLock flagsChanged (keyCode=\(keyCode)), flags=\(event.flags.rawValue), setting isCapsLockPressed=\(isPressed)")
+        
+        // Stop scrolling if CapsLock is released
+        if !isPressed {
+          SmoothScrollManager.shared.stop()
+        }
+      }
+      
+      return false
+    }
+    
+    // Handle keyUp events
+    if type == .keyUp {
+      // Check if CapsLock key is released (keyCode 57 or 62 depending on keyboard/system)
+      if keyCode == 57 || keyCode == 62 {
+        KeyListener.shared.isCapsLockPressed = false
+        print("DEBUG: CapsLock keyUp detected (keyCode=\(keyCode)), setting isCapsLockPressed = false")
+        SmoothScrollManager.shared.stop()
+      }
+      
+      // Stop scrolling when J or K keys are released
+      if keyCode == 38 || keyCode == 40 {  // J or K
+        SmoothScrollManager.shared.stop()
+        print("DEBUG: Scroll key released (keyCode=\(keyCode)), stopping scroll")
+      }
+      
       return false
     }
     
     // a key with rcmd is pressed
     if type == .keyDown {
       let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
+      
+      // Check if CapsLock key itself is pressed (keyCode 57 or 62 depending on keyboard/system)
+      if keyCode == 57 || keyCode == 62 {
+        KeyListener.shared.isCapsLockPressed = true
+        print("DEBUG: CapsLock keyDown detected (keyCode=\(keyCode)), setting isCapsLockPressed = true")
+        return false  // Don't consume the event, let it pass through
+      }
 
       // ESC key (keyCode 53) dismisses accessibility overlay
       if keyCode == 53 && AccessibilityOverlay.shared.isVisible() {
@@ -75,6 +134,21 @@ class KeyListener {
           return true  // Event was handled by overlay
         }
         return false  // Let other events pass through
+      }
+
+      // Handle CapsLock + J/K for smooth scrolling
+      // Use our tracked state since CapsLock is disabled and maskAlphaShift won't be set
+      if KeyListener.shared.isCapsLockPressed {
+        print("DEBUG: CapsLock is active (tracked state), checking J/K keys, keyCode = \(keyCode)")
+        if keyCode == 38 {  // J - scroll down
+          print("DEBUG: Scrolling down")
+          SmoothScrollManager.shared.scrollUnits(-10)  // 1 unit = ~800 pixels with 4x sensitivity
+          return true
+        } else if keyCode == 40 {  // K - scroll up
+          print("DEBUG: Scrolling up")
+          SmoothScrollManager.shared.scrollUnits(10)  // 1 unit = ~800 pixels with 4x sensitivity
+          return true
+        }
       }
 
       if event.flags.contains(.maskCmdRight) {

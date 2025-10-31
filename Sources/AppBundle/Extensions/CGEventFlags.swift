@@ -25,4 +25,8 @@ extension CGEventFlags {
   static var maskControlRight: CGEventFlags {
     return CGEventFlags(rawValue: 0x0000_2000)
   }
+  
+  static var maskAlphaShift: CGEventFlags {
+    return CGEventFlags(rawValue: 0x0001_0000)  // CapsLock
+  }
 }
