@@ -322,7 +322,7 @@ func cmdOpen(_ appName: String) {
 func cmdOpenCycle(_ appName: String) {
   let result = openOrFocusApp(appName)
 
-  if result == .opened || result == .focused {
+  if result == .opened {
     cycleAppWindows()
   }
 }
