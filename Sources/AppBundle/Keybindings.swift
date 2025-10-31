@@ -4,70 +4,110 @@ import Cocoa
 class Keybindings {
   static let shared = Keybindings()
 
-  private var rightCommandKeybindings: [Int64: () -> Void] = [
-    37: {  // L
+  private func keyCode(for char: Character) -> Int64 {
+    let string = String(char).lowercased()
+    guard let unicodeScalar = string.unicodeScalars.first else { return -1 }
+    
+    var deadKeyState: UInt32 = 0
+    var length = 0
+    var chars = [UniChar](repeating: 0, count: 4)
+    
+    let inputSource = TISCopyCurrentKeyboardInputSource().takeRetainedValue()
+    guard let layoutData = TISGetInputSourceProperty(inputSource, kTISPropertyUnicodeKeyLayoutData) else {
+      return -1
+    }
+    
+    let keyboardLayout = unsafeBitCast(CFDataGetBytePtr(unsafeBitCast(layoutData, to: CFData.self)), to: UnsafePointer<UCKeyboardLayout>.self)
+    
+    for keyCode in 0..<128 {
+      let status = UCKeyTranslate(
+        keyboardLayout,
+        UInt16(keyCode),
+        UInt16(kUCKeyActionDisplay),
+        0,
+        UInt32(LMGetKbdType()),
+        OptionBits(kUCKeyTranslateNoDeadKeysBit),
+        &deadKeyState,
+        4,
+        &length,
+        &chars
+      )
+      
+      if status == noErr && length > 0 {
+        let resultString = String(utf16CodeUnits: chars, count: length).lowercased()
+        if resultString == string {
+          return Int64(keyCode)
+        }
+      }
+    }
+    
+    return -1
+  }
+
+  private lazy var rightCommandKeybindings: [Int64: () -> Void] = [
+    keyCode(for: "L"): {
       cycleAppWindows()
     },
-    2: {  // D
+    keyCode(for: "D"): {
       // cmdOpenCycle("/Applications/kitty.app")
       cmdOpenCycle("/Applications/Ghostty.app")
     },
-    1: {  // S
+    keyCode(for: "S"): {
       cmdOpenCycle("/Applications/Safari.app")
     },
-    3: {  // F
-      cmdOpenCycle("/Applications/Google Chrome Canary.app")
+    keyCode(for: "F"): {
+      AccessibilityOverlay.shared.show()
     },
-    9: {  // V
+    keyCode(for: "V"): {
       cmdOpenCycle("/Applications/Cursor.app")
     },
-    11: {  // B
+    keyCode(for: "B"): {
       cmdOpenCycle("/Applications/Spotify.app")
     },
-    8: {  // C
+    keyCode(for: "C"): {
       cmdOpenCycle("/System/Applications/Calendar.app")
     },
-    5: { // G
+    keyCode(for: "G"): {
       cmdOpenCycle("/Applications/ChatGPT.app")
     },
-    4: { // H
+    keyCode(for: "H"): {
       cmdOpenCycle("/Users/rg/Applications/Claude.app")
     },
-    38: { // J
+    keyCode(for: "J"): {
       cmdOpenCycle("/Users/rg/Applications/Perplexity.app")
     },
-    46: {  // M
+    keyCode(for: "M"): {
       cmdOpenCycle("/System/Applications/Mail.app")
     },
-    18: {  // 1
+    keyCode(for: "1"): {
       switchToDesktop(number: 1)
     },
-    19: {  // 2
+    keyCode(for: "2"): {
       switchToDesktop(number: 2)
     },
-    20: {  // 3
+    keyCode(for: "3"): {
       switchToDesktop(number: 3)
     },
-    21: {  // 4
+    keyCode(for: "4"): {
       switchToDesktop(number: 4)
     },
-    23: {  // 5
+    keyCode(for: "5"): {
       switchToDesktop(number: 5)
     },
-    25: {  // 6
+    keyCode(for: "6"): {
       switchToDesktop(number: 6)
     },
-    26: {  // 7
+    keyCode(for: "7"): {
       switchToDesktop(number: 7)
     },
-    28: {  // 8
+    keyCode(for: "8"): {
       switchToDesktop(number: 8)
     },
-    29: {  // 9
+    keyCode(for: "9"): {
       switchToDesktop(number: 9)
     },
-    31: {  // O
-      AccessibilityOverlay.shared.show()
+    keyCode(for: "Z"): {
+      cmdOpenCycle("/Applications/Google Chrome Canary.app")
     },
   ]
 
