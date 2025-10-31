@@ -11,6 +11,60 @@ class KeyListener {
   private let snippetManager = SnippetManager()
   private var overlayShowTimer: Timer?
   private var isCapsLockPressed: Bool = false
+  
+  // keycodes are in the range 0-127
+  // >3x faster than dictionary lookup
+  private lazy var keyCodeToKey: [Key?] = {
+    var cache: [Key?] = Array(repeating: nil, count: 128)
+    
+    for specialKey in Key.Named.allCases {
+      let idx = Int(specialKey.rawValue)
+      if idx < 128 {
+        cache[idx] = .named(specialKey)
+      }
+    }
+    
+    // Then, scan for character keys (skip already-mapped special keys)
+    let inputSource = TISCopyCurrentKeyboardInputSource().takeRetainedValue()
+    guard let layoutData = TISGetInputSourceProperty(inputSource, kTISPropertyUnicodeKeyLayoutData) else {
+      return cache
+    }
+    let keyboardLayout = unsafeBitCast(
+      CFDataGetBytePtr(unsafeBitCast(layoutData, to: CFData.self)),
+      to: UnsafePointer<UCKeyboardLayout>.self
+    )
+    
+    for keyCode in 0..<128 {
+      // Skip if already mapped as special key
+      if cache[keyCode] != nil { continue }
+      
+      var deadKeyState: UInt32 = 0
+      var length = 0
+      var chars = [UniChar](repeating: 0, count: 4)
+      
+      let status = UCKeyTranslate(
+        keyboardLayout,
+        UInt16(keyCode),
+        UInt16(kUCKeyActionDisplay),
+        0,
+        UInt32(LMGetKbdType()),
+        OptionBits(kUCKeyTranslateNoDeadKeysBit),
+        &deadKeyState,
+        4,
+        &length,
+        &chars
+      )
+      
+      if status == noErr && length > 0 {
+        let string = String(utf16CodeUnits: chars, count: length).uppercased()
+        if let char = string.first {
+          cache[keyCode] = .character(char)
+        }
+      }
+    }
+    
+    return cache
+  }()
 
   init() {
     print("DEBUG: KeyListener initializing...")
@@ -154,7 +208,14 @@ class KeyListener {
       if event.flags.contains(.maskCmdRight) {
         // Another key pressed while holding right command - cancel overlay show
         KeyListener.shared.cancelOverlayShow()
-        return Keybindings.shared.processCharacter(keyCode)
+        
+        // Fast array lookup: keyCode → Key (single operation!)
+        guard keyCode >= 0 && keyCode < 128,
+              let key = KeyListener.shared.keyCodeToKey[Int(keyCode)] else {
+          return false
+        }
+        
+        return Keybindings.shared.processKey(key, flags: event.flags)
       } else {
         let char = KeyListener.keyCodeToString(keyCode: Int(keyCode), event: event)
 
