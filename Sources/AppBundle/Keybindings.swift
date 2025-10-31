@@ -154,25 +154,85 @@ class Keybindings {
   func matchSequence<S: Sequence>(_ buffer: S) -> SequenceMatch
   where S.Element == KeyPress {
 
-    var node = sequenceRoot
-    var hasElements = false
+    let bufferArray = Array(buffer)
+    guard !bufferArray.isEmpty else { return .noMatch }
 
-    for press in buffer {
-      hasElements = true
-      let element = KeyInSequence(press, modifierMask: modifierMask)
-      guard let nextNode = node.children[element] else {
-        return .noMatch
+    // Find all matching paths where registered modifiers are subset of pressed modifiers
+    var candidates: [(action: ([KeyPress]) -> Void, sequence: [KeyPress], flags: UInt64)] = []
+    var hasPartialMatch = false
+
+    findMatches(
+      at: sequenceRoot,
+      buffer: bufferArray,
+      index: 0,
+      candidates: &candidates,
+      hasPartialMatch: &hasPartialMatch
+    )
+
+    // If we found complete matches, return the most specific one
+    if !candidates.isEmpty {
+      let bestMatch = candidates.max { a, b in
+        isMoreSpecific(b.flags, than: a.flags)
+      }!
+      return .complete(action: bestMatch.action, sequence: bestMatch.sequence)
+    }
+
+    return hasPartialMatch ? .partial : .noMatch
+  }
+
+  private func findMatches(
+    at node: SequenceNode,
+    buffer: [KeyPress],
+    index: Int,
+    candidates: inout [(action: ([KeyPress]) -> Void, sequence: [KeyPress], flags: UInt64)],
+    hasPartialMatch: inout Bool
+  ) {
+    // Base case: we've matched all keys in the buffer
+    if index >= buffer.count {
+      if let action = node.action, let sequence = node.sequence {
+        // Extract flags from first key press (only first key can have modifiers)
+        let flags = sequence.first?.flags.rawValue ?? 0
+        candidates.append((action: action, sequence: sequence, flags: flags))
       }
-      node = nextNode
+      if !node.children.isEmpty {
+        hasPartialMatch = true
+      }
+      return
     }
 
-    guard hasElements else { return .noMatch }
+    let press = buffer[index]
+    let pressedElement = KeyInSequence(press, modifierMask: modifierMask)
 
-    if let action = node.action, let sequence = node.sequence {
-      return .complete(action: action, sequence: sequence)
+    // Check all children where registered flags are a subset of pressed flags
+    for (childKey, childNode) in node.children {
+      // Keys must match
+      guard childKey.key == pressedElement.key else { continue }
+
+      // Registered flags must be a subset of pressed flags
+      // (registeredFlags & pressedFlags) == registeredFlags
+      if (childKey.flags & pressedElement.flags) == childKey.flags {
+        findMatches(
+          at: childNode,
+          buffer: buffer,
+          index: index + 1,
+          candidates: &candidates,
+          hasPartialMatch: &hasPartialMatch
+        )
+      }
     }
+  }
 
-    return node.children.isEmpty ? .noMatch : .partial
+  private func isMoreSpecific(_ a: UInt64, than b: UInt64) -> Bool {
+    // If A contains all of B's flags AND has additional flags, A is more specific
+    if (a & b) == b && a != b {
+      return true
+    }
+    // If B contains all of A's flags AND has additional flags, B is more specific (A is not)
+    if (b & a) == a && b != a {
+      return false
+    }
+    // Neither is a subset of the other - use raw value as tiebreaker
+    return a > b
   }
 
   // MARK: - Helpers
@@ -302,6 +362,15 @@ class Keybindings {
 
     register([KeyPress(key: .character("O"), flags: .maskAlphaShift)]) { _ in
       AccessibilityOverlay.shared.show()
+    }
+
+    // CapsLock + J/K for smooth scrolling
+    register([KeyPress(key: .character("J"), flags: .maskAlphaShift)]) { _ in
+      SmoothScrollManager.shared.scrollUnits(-10)  // Scroll down
+    }
+
+    register([KeyPress(key: .character("K"), flags: .maskAlphaShift)]) { _ in
+      SmoothScrollManager.shared.scrollUnits(10)  // Scroll up
     }
 
     register([KeyPress(key: .character("V"), flags: .maskCmdRight)]) { _ in

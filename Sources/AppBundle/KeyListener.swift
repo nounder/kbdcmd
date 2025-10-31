@@ -233,7 +233,6 @@ class KeyListener {
       // Handle CapsLock + J/K for smooth scrolling
       // Use our tracked state since CapsLock is disabled and maskAlphaShift won't be set
       if KeyListener.shared.isCapsLockPressed {
-        print("DEBUG: CapsLock is active (tracked state), checking J/K keys, keyCode = \(keyCode)")
         if keyCode == 38 {  // J - scroll down
           print("DEBUG: Scrolling down")
           SmoothScrollManager.shared.scrollUnits(-10)  // 1 unit = ~800 pixels with 4x sensitivity
@@ -253,8 +252,8 @@ class KeyListener {
       }
 
       // When CapsLock is pressed (tracked manually), create new flags with maskAlphaShift set
-      // This is necessary because when CapsLock is disabled in System Settings,
-      // the system doesn't set this flag automatically
+      // This is necessary because when CapsLock is disabled or changed to other modifier in System Settings,
+      // the system doesn't set maskAlphaShift flag automatically
       // CGEventFlags is a struct (value type), so this creates a copy
       var eventFlags = CGEventFlags(rawValue: event.flags.rawValue)
       if KeyListener.shared.isCapsLockPressed && !eventFlags.contains(.maskAlphaShift) {
