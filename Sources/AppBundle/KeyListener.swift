@@ -10,6 +10,11 @@ class KeyListener {
   private var lastKeyPressTime: Date = Date()
   private let snippetManager = SnippetManager()
   private var overlayShowTimer: Timer?
+  /**
+   * when Caps Lock is disabled in (System Settings -> Keyboard),
+   * the system does not set the maskAlphaShift flag on events.
+   * Therefore, we need to track the Caps Lock state manually.
+   */
   private var isCapsLockPressed: Bool = false
   
   // keycodes are in the range 0-127
@@ -241,7 +246,16 @@ class KeyListener {
           return false
         }
         
-        return Keybindings.shared.processKey(key, flags: event.flags)
+        // When CapsLock is pressed (tracked manually), create new flags with maskAlphaShift set
+        // This is necessary because when CapsLock is disabled in System Settings,
+        // the system doesn't set this flag automatically
+        // CGEventFlags is a struct (value type), so this creates a copy
+        var eventFlags = CGEventFlags(rawValue: event.flags.rawValue)
+        if KeyListener.shared.isCapsLockPressed && !eventFlags.contains(.maskAlphaShift) {
+          eventFlags.insert(.maskAlphaShift)
+        }
+        
+        return Keybindings.shared.processKey(key, flags: eventFlags)
       } else {
         let char = KeyListener.keyCodeToString(keyCode: Int(keyCode), event: event)
 
