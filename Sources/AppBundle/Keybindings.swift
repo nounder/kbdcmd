@@ -52,13 +52,46 @@ enum Modifier: Hashable {
   }
 }
 
+// MARK: - Sequence Support
+
+struct KeyPress {
+  let key: Key
+  let flags: CGEventFlags
+
+  init(key: Key, flags: CGEventFlags = CGEventFlags(rawValue: 0)) {
+    self.key = key
+    self.flags = flags
+  }
+}
+
+private struct KeyInSequence: Hashable {
+  let key: Key
+  let flags: UInt64
+  
+  init(_ press: KeyPress, modifierMask: UInt64) {
+    switch press.key {
+    case .character(let char):
+      self.key = .character(Character(String(char).uppercased()))
+    case .named:
+      self.key = press.key
+    }
+    self.flags = press.flags.rawValue & modifierMask
+  }
+}
+
+private class SequenceNode {
+  var action: (([KeyPress]) -> Void)?
+  var sequence: [KeyPress]?
+  var children: [KeyInSequence: SequenceNode] = [:]
+}
+
 // MARK: - Keybindings Class
 
 class Keybindings {
   static let shared = Keybindings()
   
-  // Map: (CGEventFlags.rawValue) → (Key → Action)
-  private var bindingsByFlagsAndKey: [UInt64: [Key: () -> Void]] = [:]
+  // Unified storage: trie structure for all keybindings (single-key and sequences)
+  private var sequenceRoot = SequenceNode()
   
   // Modifier mask for extracting only relevant flags
   private let modifierMask: UInt64 = {
@@ -78,238 +111,280 @@ class Keybindings {
   
   // MARK: - Registration
   
-  func register(_ key: Key, modifiers: Modifier..., action: @escaping () -> Void) {
-    // Normalize character keys to uppercase
-    let normalizedKey: Key
-    switch key {
-    case .character(let char):
-      normalizedKey = .character(Character(String(char).uppercased()))
-    case .named:
-      normalizedKey = key
-    }
+  func register<S: Sequence>(_ sequence: S, action: @escaping ([KeyPress]) -> Void)
+    where S.Element == KeyPress {
     
-    let modifiersList = Array(modifiers)
+    let seq = Array(sequence)
+    guard !seq.isEmpty else { return }
     
-    // Check if any .either modifiers exist
-    let hasEither = modifiersList.contains {
-      if case .control(.either) = $0 { return true }
-      if case .option(.either) = $0 { return true }
-      if case .command(.either) = $0 { return true }
-      return false
-    }
+    let firstMasked = seq[0].flags.rawValue & modifierMask
+    let firstHasModifiers = firstMasked != 0
     
-    if hasEither {
-      // Expand .either into multiple registrations
-      let flagCombinations = expandEitherModifiers(modifiersList)
-      for flags in flagCombinations {
-        if bindingsByFlagsAndKey[flags] == nil {
-          bindingsByFlagsAndKey[flags] = [:]
+    if firstHasModifiers {
+      for i in 1..<seq.count {
+        let masked = seq[i].flags.rawValue & modifierMask
+        guard masked == 0 else {
+          print("ERROR: Only first key in sequence can have modifiers")
+          return
         }
-        bindingsByFlagsAndKey[flags]?[normalizedKey] = action
       }
-    } else {
-      // Single registration (common case)
-      let flags = computeFlagsRawValue(from: modifiersList)
-      if bindingsByFlagsAndKey[flags] == nil {
-        bindingsByFlagsAndKey[flags] = [:]
+    }
+    
+    let expandedSequences = expandEitherInSequence(seq)
+    
+    for expanded in expandedSequences {
+      var node = sequenceRoot
+      for press in expanded {
+        let element = KeyInSequence(press, modifierMask: modifierMask)
+        if node.children[element] == nil {
+          node.children[element] = SequenceNode()
+        }
+        node = node.children[element]!
       }
-      bindingsByFlagsAndKey[flags]?[normalizedKey] = action
+      node.sequence = expanded
+      node.action = action
     }
   }
   
   // MARK: - Lookup
   
-  func processKey(_ key: Key, flags: CGEventFlags) -> Bool {
-    let maskedFlags = maskRelevantFlags(flags.rawValue)
+  enum SequenceMatch {
+    case complete(action: ([KeyPress]) -> Void, sequence: [KeyPress])
+    case partial
+    case noMatch
+  }
+  
+  func matchSequence<S: Sequence>(_ buffer: S) -> SequenceMatch
+    where S.Element == KeyPress {
     
-    if let keyBindings = bindingsByFlagsAndKey[maskedFlags],
-       let action = keyBindings[key] {
-      action()
-      return true
+    var node = sequenceRoot
+    var hasElements = false
+    
+    for press in buffer {
+      hasElements = true
+      let element = KeyInSequence(press, modifierMask: modifierMask)
+      guard let nextNode = node.children[element] else {
+        return .noMatch
+      }
+      node = nextNode
     }
     
-    return false
+    guard hasElements else { return .noMatch }
+    
+    if let action = node.action, let sequence = node.sequence {
+      return .complete(action: action, sequence: sequence)
+    }
+    
+    return node.children.isEmpty ? .noMatch : .partial
   }
   
   // MARK: - Helpers
   
-  private func maskRelevantFlags(_ rawValue: UInt64) -> UInt64 {
-    return rawValue & modifierMask
-  }
-  
-  private func computeFlagsRawValue(from modifiers: [Modifier]) -> UInt64 {
-    var flags: UInt64 = 0
-    
-    for mod in modifiers {
-      switch mod {
-      case .control(.left):
-        flags |= CGEventFlags.maskControlLeft.rawValue
-      case .control(.right):
-        flags |= CGEventFlags.maskControlRight.rawValue
-      case .option(.left):
-        flags |= CGEventFlags.maskOptionLeft.rawValue
-      case .option(.right):
-        flags |= CGEventFlags.maskOptionRight.rawValue
-      case .command(.left):
-        flags |= CGEventFlags.maskCmdLeft.rawValue
-      case .command(.right):
-        flags |= CGEventFlags.maskCmdRight.rawValue
-      case .capsLock:
-        flags |= CGEventFlags.maskAlphaShift.rawValue
-      case .control(.either), .option(.either), .command(.either):
-        // Handled by expandEitherModifiers
+  private func expandEitherInSequence(_ sequence: [KeyPress]) -> [[KeyPress]] {
+    var hasEither = false
+    for press in sequence {
+      if hasEitherModifier(press.flags) {
+        hasEither = true
         break
       }
     }
     
-    return flags
-  }
-  
-  private func expandEitherModifiers(_ modifiers: [Modifier]) -> [UInt64] {
-    var results: [UInt64] = [0]
+    if !hasEither {
+      return [sequence]
+    }
     
-    for mod in modifiers {
-      switch mod {
-      case .control(.either):
-        // Duplicate all existing results: one with left, one with right
-        results = results.flatMap { base in
-          [
-            base | CGEventFlags.maskControlLeft.rawValue,
-            base | CGEventFlags.maskControlRight.rawValue
-          ]
+    var results: [[KeyPress]] = [[]]
+    
+    for press in sequence {
+      if hasEitherModifier(press.flags) {
+        let expansions = expandEitherFlags(press.flags)
+        results = results.flatMap { partial in
+          expansions.map { expandedFlags in
+            partial + [KeyPress(key: press.key, flags: expandedFlags)]
+          }
         }
-      case .option(.either):
-        results = results.flatMap { base in
-          [
-            base | CGEventFlags.maskOptionLeft.rawValue,
-            base | CGEventFlags.maskOptionRight.rawValue
-          ]
-        }
-      case .command(.either):
-        results = results.flatMap { base in
-          [
-            base | CGEventFlags.maskCmdLeft.rawValue,
-            base | CGEventFlags.maskCmdRight.rawValue
-          ]
-        }
-      default:
-        // Add concrete modifier to all results
-        let flagValue = getSingleFlagValue(mod)
-        results = results.map { $0 | flagValue }
+      } else {
+        results = results.map { $0 + [press] }
       }
     }
     
     return results
   }
   
-  private func getSingleFlagValue(_ modifier: Modifier) -> UInt64 {
-    switch modifier {
-    case .control(.left):
-      return CGEventFlags.maskControlLeft.rawValue
-    case .control(.right):
-      return CGEventFlags.maskControlRight.rawValue
-    case .option(.left):
-      return CGEventFlags.maskOptionLeft.rawValue
-    case .option(.right):
-      return CGEventFlags.maskOptionRight.rawValue
-    case .command(.left):
-      return CGEventFlags.maskCmdLeft.rawValue
-    case .command(.right):
-      return CGEventFlags.maskCmdRight.rawValue
-    case .capsLock:
-      return CGEventFlags.maskAlphaShift.rawValue
-    case .control(.either), .option(.either), .command(.either):
-      return 0
+  private func hasEitherModifier(_ flags: CGEventFlags) -> Bool {
+    // Check if BOTH left and right variants are set (indicates .either)
+    let hasControlBoth = flags.contains(.maskControlLeft) && flags.contains(.maskControlRight)
+    let hasOptionBoth = flags.contains(.maskOptionLeft) && flags.contains(.maskOptionRight)
+    let hasCmdBoth = flags.contains(.maskCmdLeft) && flags.contains(.maskCmdRight)
+    
+    return hasControlBoth || hasOptionBoth || hasCmdBoth
+  }
+  
+  private func expandEitherFlags(_ flags: CGEventFlags) -> [CGEventFlags] {
+    var results: [CGEventFlags] = [CGEventFlags(rawValue: 0)]
+    
+    // Handle control either
+    if flags.contains(.maskControlLeft) && flags.contains(.maskControlRight) {
+      results = results.flatMap { base in
+        [
+          CGEventFlags(rawValue: base.rawValue | CGEventFlags.maskControlLeft.rawValue),
+          CGEventFlags(rawValue: base.rawValue | CGEventFlags.maskControlRight.rawValue)
+        ]
+      }
+    } else if flags.contains(.maskControlLeft) {
+      results = results.map { CGEventFlags(rawValue: $0.rawValue | CGEventFlags.maskControlLeft.rawValue) }
+    } else if flags.contains(.maskControlRight) {
+      results = results.map { CGEventFlags(rawValue: $0.rawValue | CGEventFlags.maskControlRight.rawValue) }
     }
+    
+    // Handle option either
+    if flags.contains(.maskOptionLeft) && flags.contains(.maskOptionRight) {
+      results = results.flatMap { base in
+        [
+          CGEventFlags(rawValue: base.rawValue | CGEventFlags.maskOptionLeft.rawValue),
+          CGEventFlags(rawValue: base.rawValue | CGEventFlags.maskOptionRight.rawValue)
+        ]
+      }
+    } else if flags.contains(.maskOptionLeft) {
+      results = results.map { CGEventFlags(rawValue: $0.rawValue | CGEventFlags.maskOptionLeft.rawValue) }
+    } else if flags.contains(.maskOptionRight) {
+      results = results.map { CGEventFlags(rawValue: $0.rawValue | CGEventFlags.maskOptionRight.rawValue) }
+    }
+    
+    // Handle command either
+    if flags.contains(.maskCmdLeft) && flags.contains(.maskCmdRight) {
+      results = results.flatMap { base in
+        [
+          CGEventFlags(rawValue: base.rawValue | CGEventFlags.maskCmdLeft.rawValue),
+          CGEventFlags(rawValue: base.rawValue | CGEventFlags.maskCmdRight.rawValue)
+        ]
+      }
+    } else if flags.contains(.maskCmdLeft) {
+      results = results.map { CGEventFlags(rawValue: $0.rawValue | CGEventFlags.maskCmdLeft.rawValue) }
+    } else if flags.contains(.maskCmdRight) {
+      results = results.map { CGEventFlags(rawValue: $0.rawValue | CGEventFlags.maskCmdRight.rawValue) }
+    }
+    
+    // Handle capsLock
+    if flags.contains(.maskAlphaShift) {
+      results = results.map { CGEventFlags(rawValue: $0.rawValue | CGEventFlags.maskAlphaShift.rawValue) }
+    }
+    
+    return results
   }
   
   // MARK: - Default Keybindings
   
   private func registerDefaultKeybindings() {
-    // Right Command + Letter keybindings
-    register(.character("L"), modifiers: .command(.right)) {
+    // Right Command + Letter keybindings (single-key sequences)
+    register([KeyPress(key: .character("L"), flags: .maskCmdRight)]) { _ in
       cycleAppWindows()
     }
-    
-    register(.character("D"), modifiers: .command(.right)) {
+
+    register([KeyPress(key: .character("D"), flags: .maskCmdRight)]) { _ in
       cmdOpenCycle("/Applications/Ghostty.app")
     }
-    
-    register(.character("S"), modifiers: .command(.right)) {
+
+    register([KeyPress(key: .character("S"), flags: .maskCmdRight)]) { _ in
       cmdOpenCycle("/Applications/Safari.app")
     }
-    
-    register(.character("F"), modifiers: .command(.right)) {
+
+    register([KeyPress(key: .character("F"), flags: .maskCmdRight)]) { _ in
       AccessibilityOverlay.shared.show()
     }
-    
-    register(.character("V"), modifiers: .command(.right)) {
+
+    register([KeyPress(key: .character("V"), flags: .maskCmdRight)]) { _ in
       cmdOpenCycle("/Applications/Cursor.app")
     }
-    
-    register(.character("B"), modifiers: .command(.right)) {
+
+    register([KeyPress(key: .character("B"), flags: .maskCmdRight)]) { _ in
       cmdOpenCycle("/Applications/Spotify.app")
     }
-    
-    register(.character("C"), modifiers: .command(.right)) {
+
+    register([KeyPress(key: .character("C"), flags: .maskCmdRight)]) { _ in
       cmdOpenCycle("/System/Applications/Calendar.app")
     }
-    
-    register(.character("G"), modifiers: .command(.right)) {
+
+    register([KeyPress(key: .character("G"), flags: .maskCmdRight)]) { _ in
       cmdOpenCycle("/Applications/ChatGPT.app")
     }
-    
-    register(.character("H"), modifiers: .command(.right)) {
+
+    register([KeyPress(key: .character("H"), flags: .maskCmdRight)]) { _ in
       cmdOpenCycle("/Users/rg/Applications/Claude.app")
     }
-    
-    register(.character("J"), modifiers: .command(.right)) {
+
+    register([KeyPress(key: .character("J"), flags: .maskCmdRight)]) { _ in
       cmdOpenCycle("/Users/rg/Applications/Perplexity.app")
     }
-    
-    register(.character("M"), modifiers: .command(.right)) {
+
+    register([KeyPress(key: .character("M"), flags: .maskCmdRight)]) { _ in
       cmdOpenCycle("/System/Applications/Mail.app")
     }
-    
-    register(.character("Z"), modifiers: .command(.right)) {
+
+    register([KeyPress(key: .character("Z"), flags: .maskCmdRight)]) { _ in
       cmdOpenCycle("/Applications/Google Chrome Canary.app")
     }
-    
+
     // Right Command + Number keybindings (desktop switching)
-    register(.character("1"), modifiers: .command(.right)) {
+    register([KeyPress(key: .character("1"), flags: .maskCmdRight)]) { _ in
       switchToDesktop(number: 1)
     }
-    
-    register(.character("2"), modifiers: .command(.right)) {
+
+    register([KeyPress(key: .character("2"), flags: .maskCmdRight)]) { _ in
       switchToDesktop(number: 2)
     }
-    
-    register(.character("3"), modifiers: .command(.right)) {
+
+    register([KeyPress(key: .character("3"), flags: .maskCmdRight)]) { _ in
       switchToDesktop(number: 3)
     }
-    
-    register(.character("4"), modifiers: .command(.right)) {
+
+    register([KeyPress(key: .character("4"), flags: .maskCmdRight)]) { _ in
       switchToDesktop(number: 4)
     }
-    
-    register(.character("5"), modifiers: .command(.right)) {
+
+    register([KeyPress(key: .character("5"), flags: .maskCmdRight)]) { _ in
       switchToDesktop(number: 5)
     }
-    
-    register(.character("6"), modifiers: .command(.right)) {
+
+    register([KeyPress(key: .character("6"), flags: .maskCmdRight)]) { _ in
       switchToDesktop(number: 6)
     }
-    
-    register(.character("7"), modifiers: .command(.right)) {
+
+    register([KeyPress(key: .character("7"), flags: .maskCmdRight)]) { _ in
       switchToDesktop(number: 7)
     }
-    
-    register(.character("8"), modifiers: .command(.right)) {
+
+    register([KeyPress(key: .character("8"), flags: .maskCmdRight)]) { _ in
       switchToDesktop(number: 8)
     }
-    
-    register(.character("9"), modifiers: .command(.right)) {
+
+    register([KeyPress(key: .character("9"), flags: .maskCmdRight)]) { _ in
       switchToDesktop(number: 9)
+    }
+    
+    // Character-only sequences (replacing snippet manager)
+    let seqTdf = [
+      KeyPress(key: .character("t")),
+      KeyPress(key: .character("d")),
+      KeyPress(key: .character("f"))
+    ]
+    register(seqTdf) { seq in
+      let df = DateFormatter()
+      df.dateFormat = "yyyy-MM-dd"
+      let dateString = df.string(from: Date())
+      Snippets.expandSnippet(for: seq, insert: dateString)
+    }
+
+    let seqTds = [
+      KeyPress(key: .character("t")),
+      KeyPress(key: .character("d")),
+      KeyPress(key: .character("s"))
+    ]
+    register(seqTds) { seq in
+      let df = DateFormatter()
+      df.dateFormat = "yyMMdd"
+      let dateString = df.string(from: Date())
+      Snippets.expandSnippet(for: seq, insert: dateString)
     }
   }
 }

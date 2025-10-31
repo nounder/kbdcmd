@@ -6,9 +6,8 @@ class KeyListener {
   static let shared = KeyListener()
 
   private var eventTap: CFMachPort?
-  private var buffer: String = ""
+  private var sequenceBuffer: [KeyPress] = []
   private var lastKeyPressTime: Date = Date()
-  private let snippetManager = SnippetManager()
   private var overlayShowTimer: Timer?
   /**
    * when Caps Lock is disabled in (System Settings -> Keyboard),
@@ -236,37 +235,27 @@ class KeyListener {
         }
       }
 
+      // Fast array lookup: keyCode → Key (single operation!)
+      guard keyCode >= 0 && keyCode < 128,
+            let key = KeyListener.shared.keyCodeToKey[Int(keyCode)] else {
+        return false
+      }
+      
+      // When CapsLock is pressed (tracked manually), create new flags with maskAlphaShift set
+      // This is necessary because when CapsLock is disabled in System Settings,
+      // the system doesn't set this flag automatically
+      // CGEventFlags is a struct (value type), so this creates a copy
+      var eventFlags = CGEventFlags(rawValue: event.flags.rawValue)
+      if KeyListener.shared.isCapsLockPressed && !eventFlags.contains(.maskAlphaShift) {
+        eventFlags.insert(.maskAlphaShift)
+      }
+      
       if event.flags.contains(.maskCmdRight) {
         // Another key pressed while holding right command - cancel overlay show
         KeyListener.shared.cancelOverlayShow()
-        
-        // Fast array lookup: keyCode → Key (single operation!)
-        guard keyCode >= 0 && keyCode < 128,
-              let key = KeyListener.shared.keyCodeToKey[Int(keyCode)] else {
-          return false
-        }
-        
-        // When CapsLock is pressed (tracked manually), create new flags with maskAlphaShift set
-        // This is necessary because when CapsLock is disabled in System Settings,
-        // the system doesn't set this flag automatically
-        // CGEventFlags is a struct (value type), so this creates a copy
-        var eventFlags = CGEventFlags(rawValue: event.flags.rawValue)
-        if KeyListener.shared.isCapsLockPressed && !eventFlags.contains(.maskAlphaShift) {
-          eventFlags.insert(.maskAlphaShift)
-        }
-        
-        return Keybindings.shared.processKey(key, flags: eventFlags)
-      } else {
-        let char = KeyListener.keyCodeToString(keyCode: Int(keyCode), event: event)
-
-        guard let char else {
-          print("Error: Character is nil")
-
-          return false
-        }
-
-        return KeyListener.shared.processCharacter(char)
       }
+      
+      return KeyListener.shared.processKeyPress(key, flags: eventFlags)
     }
 
     return false
@@ -287,39 +276,31 @@ class KeyListener {
     overlayShowTimer = nil
   }
 
-  private func processCharacter(_ char: String) -> Bool {
+  private func processKeyPress(_ key: Key, flags: CGEventFlags) -> Bool {
     let currentTime = Date()
-    if currentTime.timeIntervalSince(lastKeyPressTime) > 0.4 {
-      buffer = ""
+    if currentTime.timeIntervalSince(lastKeyPressTime) > 0.2 {
+      sequenceBuffer.removeAll()
     }
     lastKeyPressTime = currentTime
-
-    buffer += char
-    return checkAndExpandSnippet()
-  }
-
-  private func checkAndExpandSnippet() -> Bool {
-    if let expansion = snippetManager.getExpansion(for: buffer) {
-      expandSnippet(expansion)
-      buffer = ""
-
+    
+    sequenceBuffer.append(KeyPress(key: key, flags: flags))
+    
+    let result = Keybindings.shared.matchSequence(sequenceBuffer)
+    
+    switch result {
+    case .complete(let action, let sequence):
+      sequenceBuffer.removeAll()
+      action(sequence)
       return true
-    }
-
-    return false
-  }
-
-  private func expandSnippet(_ expansion: String) {
-    // Delete the trigger string
-    for _ in 0..<buffer.count - 1 {
-      simulateKeyPress(keyCode: 0x33, flags: [])  // Backspace key
-    }
-
-    // Type out the expansion
-    for char in expansion {
-      if let keyCode = KeyListener.stringToKeyCode(char: String(char)) {
-        simulateKeyPress(keyCode: keyCode, flags: [])
-      }
+      
+    case .partial:
+      // Waiting for more keys in sequence, don't consume event
+      return false
+      
+    case .noMatch:
+      // Not a sequence, reset and let key through
+      sequenceBuffer.removeAll()
+      return false
     }
   }
 
