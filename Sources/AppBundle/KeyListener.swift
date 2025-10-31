@@ -14,7 +14,9 @@ class KeyListener {
   
   // keycodes are in the range 0-127
   // >3x faster than dictionary lookup
-  private lazy var keyCodeToKey: [Key?] = {
+  private var keyCodeToKey: [Key?] = []
+  
+  private func buildKeyCodeCache() -> [Key?] {
     var cache: [Key?] = Array(repeating: nil, count: 128)
     
     for specialKey in Key.Named.allCases {
@@ -64,10 +66,24 @@ class KeyListener {
     }
     
     return cache
-  }()
+  }
+
 
   init() {
     print("DEBUG: KeyListener initializing...")
+    // Build initial key code cache
+    keyCodeToKey = buildKeyCodeCache()
+    print("DEBUG: Initial key code cache built")
+    
+    // Register for keyboard input source change notifications
+    DistributedNotificationCenter.default().addObserver(
+      self,
+      selector: #selector(keyboardInputSourceChanged),
+      name: NSNotification.Name(rawValue: kTISNotifySelectedKeyboardInputSourceChanged as String),
+      object: nil
+    )
+    print("DEBUG: Registered for keyboard input source change notifications")
+    
     // Listen for keyDown, keyUp, and flagsChanged events (for modifier keys like right command)
     let eventMask = (1 << CGEventType.keyDown.rawValue) | (1 << CGEventType.keyUp.rawValue) | (1 << CGEventType.flagsChanged.rawValue)
     guard
@@ -93,6 +109,16 @@ class KeyListener {
     CFRunLoopAddSource(CFRunLoopGetCurrent(), runLoopSource, .commonModes)
     CGEvent.tapEnable(tap: eventTap, enable: true)
     print("DEBUG: KeyListener initialized, event tap enabled")
+  }
+  
+  deinit {
+    DistributedNotificationCenter.default().removeObserver(self)
+  }
+  
+  @objc private func keyboardInputSourceChanged(_ notification: Notification) {
+    print("DEBUG: Keyboard input source changed, rebuilding key code cache")
+    keyCodeToKey = buildKeyCodeCache()
+    print("DEBUG: Key code cache rebuilt")
   }
 
   static func handleEvent(proxy: CGEventTapProxy, type: CGEventType, event: CGEvent) -> Bool {
