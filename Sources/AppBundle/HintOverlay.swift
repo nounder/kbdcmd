@@ -1,19 +1,19 @@
-import SwiftUI
 import Cocoa
+import SwiftUI
 
 // MARK: - Custom Window for Keyboard Input
 
 /// Custom NSWindow that captures keyboard events for the overlay
 class AccessibilityOverlayWindow: NSWindow {
   var onKeyDown: ((NSEvent) -> Bool)?  // Returns true if event was handled
-  
+
   override func keyDown(with event: NSEvent) {
     if let onKeyDown = onKeyDown, onKeyDown(event) {
       return  // Event was handled
     }
     super.keyDown(with: event)
   }
-  
+
   override var acceptsFirstResponder: Bool {
     return true
   }
@@ -24,11 +24,11 @@ class AccessibilityOverlayWindow: NSWindow {
 /// Manages the UI overlay window and views for displaying clickable element hints
 class HintOverlay {
   private var window: NSWindow?
-  
+
   var isVisible: Bool {
     return window != nil
   }
-  
+
   /// Shows loading overlay on the screen containing the mouse cursor
   /// Must be called on the main thread
   func showLoading(onDismiss: @escaping () -> Void) {
@@ -39,21 +39,22 @@ class HintOverlay {
       }
       return
     }
-    
+
     // Get mouse location to find which screen to show overlay on
-    let mouseLocation = NSEvent.mouseLocation  
-    let targetScreen = NSScreen.screens.first(where: { $0.frame.contains(mouseLocation) }) ?? NSScreen.main
-    
+    let mouseLocation = NSEvent.mouseLocation
+    let targetScreen =
+      NSScreen.screens.first(where: { $0.frame.contains(mouseLocation) }) ?? NSScreen.main
+
     guard let screen = targetScreen else {
       print("DEBUG: No screen found")
       return
     }
-    
+
     print("DEBUG: Creating overlay on screen: \(screen.frame), mouse at: \(mouseLocation)")
-    
+
     let contentView = LoadingOverlayView(onDismiss: onDismiss)
     let hostingView = NSHostingView(rootView: contentView)
-    
+
     // Create a borderless window covering the target screen
     let window = AccessibilityOverlayWindow(
       contentRect: screen.frame,
@@ -61,20 +62,20 @@ class HintOverlay {
       backing: .buffered,
       defer: false
     )
-    
+
     window.contentView = hostingView
     window.backgroundColor = .clear
-    window.isOpaque = false  
+    window.isOpaque = false
     window.level = .floating
     window.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle]
     window.ignoresMouseEvents = false  // Allow mouse events to pass through to SwiftUI
     window.orderFrontRegardless()
-    
+
     self.window = window
-    
+
     print("DEBUG: Window created at: \(window.frame)")
   }
-  
+
   /// Updates the overlay with clickable elements
   /// Must be called on the main thread
   func update(
@@ -86,34 +87,36 @@ class HintOverlay {
     // Ensure we're on main thread for UI updates
     guard Thread.isMainThread else {
       DispatchQueue.main.async {
-        self.update(elements: elements, keyboardCoordinator: keyboardCoordinator, onElementClick: onElementClick, onDismiss: onDismiss)
+        self.update(
+          elements: elements, keyboardCoordinator: keyboardCoordinator,
+          onElementClick: onElementClick, onDismiss: onDismiss)
       }
       return
     }
-    
+
     guard let window = self.window, let screen = window.screen else {
       print("DEBUG: No window or screen available")
       return
     }
-    
+
     let screenFrame = screen.frame
-    
+
     // The screen with the menu bar is always index 0 (the primary display)
     // This is the most reliable way to detect the primary screen
     let isPrimaryScreen = (screen == NSScreen.screens[0])
-    
+
     print("DEBUG: Overlay on screen: \(screenFrame), found \(elements.count) elements")
-    
+
     let windowFrame = window.frame
-    
+
     print("DEBUG: Window frame: \(windowFrame)")
     print("DEBUG: Screen frame: \(screenFrame), window screen: \(window.screen?.frame ?? .zero)")
-    
+
     // Log element positions for debugging
     for (index, element) in elements.enumerated() {
       print("DEBUG: Element \(index + 1) '\(element.title)' at global: \(element.frame)")
     }
-    
+
     // Create the overlay view with keyboard input handling
     let overlayView = AccessibilityOverlayView(
       elements: elements,
@@ -125,12 +128,12 @@ class HintOverlay {
       onDismiss: onDismiss
     )
     let hostingView = NSHostingView(rootView: overlayView)
-    
+
     // Update window content (we're already on main thread)
     window.contentView = hostingView
     print("DEBUG: Overlay view updated with \(elements.count) elements")
   }
-  
+
   /// Hides and dismisses the overlay
   /// Must be called on the main thread
   func hide() {
@@ -141,11 +144,11 @@ class HintOverlay {
       }
       return
     }
-    
+
     window?.orderOut(nil)
     window = nil
   }
-  
+
   /// Brings the overlay to front if it exists
   func bringToFront() {
     window?.orderFrontRegardless()
@@ -157,7 +160,7 @@ class HintOverlay {
 /// Loading indicator shown while scanning for elements
 struct LoadingOverlayView: View {
   let onDismiss: () -> Void
-  
+
   var body: some View {
     ZStack {
       // Dismissable background
@@ -165,13 +168,13 @@ struct LoadingOverlayView: View {
         .onTapGesture {
           onDismiss()
         }
-      
+
       // Loading indicator
       VStack(spacing: 12) {
         ProgressView()
           .scaleEffect(1.5)
           .progressViewStyle(CircularProgressViewStyle(tint: .white))
-        
+
         Text("Scanning for links and buttons...")
           .font(.system(size: 16, weight: .medium))
           .foregroundColor(.white)
@@ -195,9 +198,9 @@ struct AccessibilityOverlayView: View {
   let keyboardCoordinator: KeyboardInputCoordinator
   let onElementClick: (ClickableElement) -> Void
   let onDismiss: () -> Void
-  
+
   @ObservedObject private var keyboardInput: KeyboardInputCoordinator
-  
+
   init(
     elements: [ClickableElement],
     windowFrame: CGRect,
@@ -216,12 +219,12 @@ struct AccessibilityOverlayView: View {
     self.onDismiss = onDismiss
     self._keyboardInput = ObservedObject(wrappedValue: keyboardCoordinator)
   }
-  
+
   // Computed properties for matching elements
   private var matchingElements: [(index: Int, element: ClickableElement)] {
     keyboardCoordinator.getMatchingElements(for: keyboardCoordinator.typedPrefix)
   }
-  
+
   // Elements to display: all if no prefix, only matching if prefix exists
   private var elementsToDisplay: [(index: Int, element: ClickableElement)] {
     if keyboardCoordinator.typedPrefix.isEmpty {
@@ -229,7 +232,7 @@ struct AccessibilityOverlayView: View {
     }
     return matchingElements
   }
-  
+
   var body: some View {
     GeometryReader { geometry in
       ZStack {
@@ -241,15 +244,17 @@ struct AccessibilityOverlayView: View {
             print("DEBUG: Background tapped")
             onDismiss()
           }
-        
+
         // Numbered hint badges for each element (only show matching ones when prefix is typed)
         ForEach(Array(elementsToDisplay), id: \.element.id) { item in
           let elementIndex = item.index
           let element = item.element
           let typedPrefix = keyboardCoordinator.typedPrefix
           let isMatching = matchingElements.contains { $0.index == elementIndex }
-          let matchedPrefixLength = typedPrefix.isEmpty ? 0 : (String(elementIndex).hasPrefix(typedPrefix) ? typedPrefix.count : 0)
-          
+          let matchedPrefixLength =
+            typedPrefix.isEmpty
+            ? 0 : (String(elementIndex).hasPrefix(typedPrefix) ? typedPrefix.count : 0)
+
           elementHint(
             for: element,
             index: elementIndex,
@@ -258,21 +263,21 @@ struct AccessibilityOverlayView: View {
             matchedPrefixLength: matchedPrefixLength
           )
         }
-        
+
         // Show typed prefix indicator
         if !keyboardCoordinator.typedPrefix.isEmpty {
           typedPrefixIndicator
         }
-        
+
         // Instructions banner
         instructionsBanner
       }
     }
     .edgesIgnoringSafeArea(.all)
   }
-  
+
   // MARK: - View Components
-  
+
   /// Creates a numbered square hint badge at the left edge, vertically centered on an element
   private func elementHint(
     for element: ClickableElement,
@@ -283,10 +288,10 @@ struct AccessibilityOverlayView: View {
   ) -> some View {
     let hintSize: CGFloat = 28
     let indexString = String(index)
-    
+
     // COORDINATE SYSTEM CONVERSION:
     // Accessibility API (kAXPositionAttribute) uses TOP-LEFT origin
-    // NSWindow.frame uses BOTTOM-LEFT origin  
+    // NSWindow.frame uses BOTTOM-LEFT origin
     // SwiftUI uses TOP-LEFT origin
     //
     // Conversion steps:
@@ -294,7 +299,7 @@ struct AccessibilityOverlayView: View {
     // 2. Y: Convert window frame from bottom-left to top-left, then calculate relative position
     // Position hint at the left edge horizontally, centered vertically
     let viewX = element.frame.minX - windowFrame.minX
-    
+
     // Y conversion: Both Accessibility API and SwiftUI use top-left origin
     // NSWindow.frame uses bottom-left origin, so convert window top edge to top-left origin
     // For multi-monitor setups, we need the total screen height of all screens combined
@@ -302,14 +307,14 @@ struct AccessibilityOverlayView: View {
     // Accessibility API coordinates are relative to the top-left of the primary screen
     // So we need to find what Y coordinate corresponds to the window's top in top-left origin
     let primaryScreenHeight = NSScreen.screens.first?.frame.height ?? windowHeight
-    
+
     // Convert window's top edge from bottom-left origin to top-left origin
     // windowFrame.maxY is the top edge in bottom-left origin
     // In top-left origin, this would be: screenHeight - windowFrame.maxY
     let windowTopYInTopLeft = primaryScreenHeight - windowFrame.maxY  // Window top in top-left origin
     let elementCenterYInTopLeft = element.frame.midY  // Element center in top-left origin
     let elementCenterYRelativeToWindow = elementCenterYInTopLeft - windowTopYInTopLeft
-    
+
     // Debug logging for coordinate conversion (first element only to avoid spam)
     if index == 1 {
       print("DEBUG: Coordinate conversion for element \(index) '\(element.title)':")
@@ -319,17 +324,19 @@ struct AccessibilityOverlayView: View {
       print("DEBUG:   Window top in top-left origin: \(windowTopYInTopLeft)")
       print("DEBUG:   Element center in top-left origin: \(elementCenterYInTopLeft)")
       print("DEBUG:   Element center Y relative to window top: \(elementCenterYRelativeToWindow)")
-      print("DEBUG:   Calculated viewX: \(viewX), viewY: \(elementCenterYRelativeToWindow) (top-left origin)")
+      print(
+        "DEBUG:   Calculated viewX: \(viewX), viewY: \(elementCenterYRelativeToWindow) (top-left origin)"
+      )
       print("DEBUG:   Geometry size: \(geometrySize)")
     }
-    
+
     // Use .position() for absolute positioning within the geometry
     // .position() sets the CENTER of the view at the given coordinates
     // X: Position hint center at left edge (minX) by adding half hint size
     // Y: Position hint center at element center (midY), no adjustment needed
     let posX = viewX + hintSize / 2
     let posY = elementCenterYRelativeToWindow
-    
+
     return ZStack {
       // Square background - highlight if matching typed prefix
       RoundedRectangle(cornerRadius: 4)
@@ -338,7 +345,7 @@ struct AccessibilityOverlayView: View {
           RoundedRectangle(cornerRadius: 4)
             .stroke(isMatching ? Color.white : Color.clear, lineWidth: 2)
         )
-      
+
       // Index number with highlighting for matched prefix
       if matchedPrefixLength > 0 && matchedPrefixLength < indexString.count {
         // Show matched prefix in different color
@@ -346,7 +353,7 @@ struct AccessibilityOverlayView: View {
           Text(String(indexString.prefix(matchedPrefixLength)))
             .font(.system(size: 13, weight: .bold))
             .foregroundColor(.white)
-          
+
           Text(String(indexString.dropFirst(matchedPrefixLength)))
             .font(.system(size: 13, weight: .bold))
             .foregroundColor(.yellow)
@@ -366,7 +373,7 @@ struct AccessibilityOverlayView: View {
       onElementClick(element)
     }
   }
-  
+
   /// Instructions banner at the top of the overlay
   private var instructionsBanner: some View {
     VStack {
@@ -376,7 +383,7 @@ struct AccessibilityOverlayView: View {
           Text("Type number to select • Click hint to activate • Press ESC to dismiss")
             .font(.system(size: 14, weight: .medium))
             .foregroundColor(.white)
-          
+
           if !keyboardCoordinator.typedPrefix.isEmpty {
             Text("Typed: \(keyboardCoordinator.typedPrefix)")
               .font(.system(size: 12, weight: .semibold))
@@ -395,7 +402,7 @@ struct AccessibilityOverlayView: View {
       Spacer()
     }
   }
-  
+
   /// Typed prefix indicator showing what the user has typed so far
   private var typedPrefixIndicator: some View {
     VStack {
@@ -417,8 +424,7 @@ struct AccessibilityOverlayView: View {
       }
     }
   }
-  
-  // MARK: - Helpers
-  
-}
 
+  // MARK: - Helpers
+
+}

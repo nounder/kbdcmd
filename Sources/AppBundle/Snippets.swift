@@ -2,14 +2,11 @@ import ApplicationServices
 import Cocoa
 
 final class Snippets {
-  private static let backspaceKeyCode: CGKeyCode = 51 // Backspace
+  private static let backspaceKeyCode: CGKeyCode = 51  // Backspace
   private static let nonCharacterModifierMask: UInt64 = {
-    CGEventFlags.maskControlLeft.rawValue |
-    CGEventFlags.maskControlRight.rawValue |
-    CGEventFlags.maskOptionLeft.rawValue |
-    CGEventFlags.maskOptionRight.rawValue |
-    CGEventFlags.maskCmdLeft.rawValue |
-    CGEventFlags.maskCmdRight.rawValue
+    CGEventFlags.maskControlLeft.rawValue | CGEventFlags.maskControlRight.rawValue
+      | CGEventFlags.maskOptionLeft.rawValue | CGEventFlags.maskOptionRight.rawValue
+      | CGEventFlags.maskCmdLeft.rawValue | CGEventFlags.maskCmdRight.rawValue
   }()
 
   private static func deleteCharacters(count: Int) {

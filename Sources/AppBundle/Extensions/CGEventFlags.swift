@@ -25,15 +25,15 @@ extension CGEventFlags {
   static var maskControlRight: CGEventFlags {
     return CGEventFlags(rawValue: 0x0000_2000)
   }
-  
+
   static var maskOptionLeft: CGEventFlags {
     return CGEventFlags(rawValue: 0x0000_0020)
   }
-  
+
   static var maskOptionRight: CGEventFlags {
     return CGEventFlags(rawValue: 0x0000_0040)
   }
-  
+
   static var maskAlphaShift: CGEventFlags {
     return CGEventFlags(rawValue: 0x0001_0000)  // CapsLock
   }
