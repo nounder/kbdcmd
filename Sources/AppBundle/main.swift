@@ -106,10 +106,6 @@ func hasKeyboardShortcut(_ menuItem: AXUIElement, character: String, exactModifi
   }
 
   // Get title for debugging
-  let titleStr = title ?? "unknown"
-  print(
-    "Menu item: '\(titleStr)', char: '\(cmdCharString)', modifiers: \(itemModifiers), expected: \(exactModifiers)"
-  )
 
   // Must match exactly - no extra modifiers allowed
   // Cmd only = 1, Cmd+Shift = 3, Cmd+Option = 5, Cmd+Control = 9
@@ -123,7 +119,7 @@ func createNewWindowViaMenu(for app: AXUIElement) -> Bool {
   guard AXUIElementCopyAttributeValue(app, kAXMenuBarAttribute as CFString, &menuBar) == .success,
     CFGetTypeID(menuBar) == AXUIElementGetTypeID()
   else {
-    print("DEBUG: Could not get menu bar")
+    debugLog("Could not get menu bar")
     return false
   }
 
@@ -133,7 +129,7 @@ func createNewWindowViaMenu(for app: AXUIElement) -> Bool {
   let localizedFileMenu = getLocalizedString(key: "File", tableName: "MenuCommands")
   let localizedNewWindow = getLocalizedString(key: "New Window", tableName: "MenuCommands")
 
-  print("DEBUG: Looking for File menu: '\(localizedFileMenu)', New Window: '\(localizedNewWindow)'")
+  debugLog("Looking for File menu: '\(localizedFileMenu)', New Window: '\(localizedNewWindow)'")
 
   // First, find the File menu
   let tree = AXTree(root: menuBarElement)
@@ -152,7 +148,7 @@ func createNewWindowViaMenu(for app: AXUIElement) -> Bool {
   }
 
   guard let fileMenu = fileMenu else {
-    print("DEBUG: Could not find File menu")
+    debugLog("Could not find File menu")
     return false
   }
 
@@ -165,7 +161,7 @@ func createNewWindowViaMenu(for app: AXUIElement) -> Bool {
     // Note: modifiers value 0 means Cmd only, 1 means Cmd+Shift
     // We want ONLY Cmd (value = 0), not Cmd+Shift (value = 1)
     if hasKeyboardShortcut(element, character: "n", exactModifiers: 0) {
-      print("DEBUG: Found matching shortcut, performing action")
+      debugLog("Found matching shortcut, performing action")
       foundItem = element
       return .stop
     }
@@ -345,7 +341,7 @@ func registerDefaultKeybindings() {
   }
 
   kb.register([KeyPress(key: .character("O"), flags: .maskAlphaShift)]) { _ in
-    AccessibilityOverlay.shared.show()
+    HintOverlay.shared.show()
   }
 
   // CapsLock + J/K for scrolling

@@ -19,7 +19,7 @@ class AXHelpers {
     var clickableElements: [ClickableElement] = []
 
     guard let frontmostApp = NSWorkspace.shared.frontmostApplication else {
-      print("DEBUG: No frontmost app")
+      debugLog("No frontmost app")
       return []
     }
 
@@ -65,7 +65,7 @@ class AXHelpers {
       depth: 0
     )
 
-    print("DEBUG: Collected \(clickableElements.count) elements")
+    debugLog("Collected \(clickableElements.count) elements")
     return clickableElements
   }
 
@@ -121,10 +121,10 @@ class AXHelpers {
 
     // Debug logging for button detection
     if isButton {
-      print("DEBUG: Found button element with role: \(role)")
+      debugLog("Found button element with role: \(role)")
     }
     if isTab {
-      print("DEBUG: Found tab button with role: \(role)")
+      debugLog("Found tab button with role: \(role)")
     }
 
     guard isLink || isButton || isTab || isScrollContainer else {
@@ -165,7 +165,7 @@ class AXHelpers {
       // Filter out window control buttons (close, minimize, full screen)
       // But always include tab buttons
       if isButton && !isTabButton(element: element) && isWindowControlButton(element: element) {
-        print("DEBUG: Filtering out window control button")
+        debugLog("Filtering out window control button")
         // Don't process children of window control buttons
         return
       }
@@ -178,13 +178,13 @@ class AXHelpers {
 
       // Debug logging for buttons and tabs
       if isButton || isTab {
-        print(
-          "DEBUG: Processing \(isTab ? "tab" : "button") '\(finalTitle)' at frame: \(frame), enabled: \(attributes.enabled ?? true)"
+        debugLog(
+          "Processing \(isTab ? "tab" : "button") '\(finalTitle)' at frame: \(frame), enabled: \(attributes.enabled ?? true)"
         )
         if let container = currentContainerFrame {
-          print("DEBUG: Container frame: \(container)")
+          debugLog("Container frame: \(container)")
         } else {
-          print("DEBUG: Container frame: nil")
+          debugLog("Container frame: nil")
         }
       }
 
@@ -198,7 +198,7 @@ class AXHelpers {
       {
 
         if isButton || isTab {
-          print("DEBUG: Adding \(isTab ? "tab" : "button") '\(finalTitle)' to clickable elements")
+          debugLog("Adding \(isTab ? "tab" : "button") '\(finalTitle)' to clickable elements")
         }
 
         let clickable = ClickableElement(
@@ -210,13 +210,13 @@ class AXHelpers {
         )
         clickableElements.append(clickable)
       } else if isButton || isTab {
-        print("DEBUG: \(isTab ? "Tab" : "Button") '\(finalTitle)' filtered out by visibility check")
+        debugLog("\(isTab ? "Tab" : "Button") '\(finalTitle)' filtered out by visibility check")
       }
     } else if isButton || isTab {
       let positionStr = attributes.position.map { "\($0)" } ?? "nil"
       let sizeStr = attributes.size.map { "\($0)" } ?? "nil"
-      print(
-        "DEBUG: \(isTab ? "Tab" : "Button") filtered out - missing position/size or invalid size. position: \(positionStr), size: \(sizeStr)"
+      debugLog(
+        "\(isTab ? "Tab" : "Button") filtered out - missing position/size or invalid size. position: \(positionStr), size: \(sizeStr)"
       )
     }
 
@@ -420,13 +420,13 @@ class AXHelpers {
 
     let visibleViewport = CGRect(
       x: position.x, y: position.y, width: size.width, height: size.height)
-    print("DEBUG: Found \(role) container - visible viewport: \(visibleViewport)")
+    debugLog("Found \(role) container - visible viewport: \(visibleViewport)")
 
     // If we already have a parent container, intersect to get visible area
     // This handles nested scroll areas correctly
     if let existingContainer = existingContainer {
       let intersection = existingContainer.intersection(visibleViewport)
-      print("DEBUG: Intersected with existing container: \(intersection)")
+      debugLog("Intersected with existing container: \(intersection)")
       return intersection
     }
 
@@ -473,7 +473,7 @@ class AXHelpers {
     let isOnScreen = screenBounds.contains { $0.intersects(frame) }
 
     if isOnScreen {
-      print("DEBUG: Including '\(title)' - element at \(frame) is on screen")
+      debugLog("Including '\(title)' - element at \(frame) is on screen")
       return true
     }
 
@@ -485,20 +485,20 @@ class AXHelpers {
       let intersectsViewport = containerViewport.intersects(frame)
 
       if intersectsViewport {
-        print(
-          "DEBUG: Including '\(title)' - web element at \(frame) intersects visible viewport \(containerViewport)"
+        debugLog(
+          "Including '\(title)' - web element at \(frame) intersects visible viewport \(containerViewport)"
         )
         return true
       } else {
-        print(
-          "DEBUG: Filtering out '\(title)' - web element at \(frame) outside visible viewport \(containerViewport)"
+        debugLog(
+          "Filtering out '\(title)' - web element at \(frame) outside visible viewport \(containerViewport)"
         )
         return false
       }
     }
 
     // No container and not on screen = not visible
-    print("DEBUG: Filtering out '\(title)' - off screen at \(frame)")
+    debugLog("Filtering out '\(title)' - off screen at \(frame)")
     return false
   }
 

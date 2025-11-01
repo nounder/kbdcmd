@@ -74,10 +74,10 @@ class KeyListener {
   }
 
   init() {
-    print("DEBUG: KeyListener initializing...")
+    debugLog("KeyListener initializing...")
     // Build initial key code cache
     keyCodeToKey = buildKeyCodeCache()
-    print("DEBUG: Initial key code cache built")
+    debugLog("Initial key code cache built")
 
     // Register for keyboard input source change notifications
     DistributedNotificationCenter.default().addObserver(
@@ -86,7 +86,7 @@ class KeyListener {
       name: NSNotification.Name(rawValue: kTISNotifySelectedKeyboardInputSourceChanged as String),
       object: nil
     )
-    print("DEBUG: Registered for keyboard input source change notifications")
+    debugLog("Registered for keyboard input source change notifications")
 
     // Listen for keyDown, keyUp, and flagsChanged events (for modifier keys like right command)
     let eventMask =
@@ -114,7 +114,7 @@ class KeyListener {
     let runLoopSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, eventTap, 0)
     CFRunLoopAddSource(CFRunLoopGetCurrent(), runLoopSource, .commonModes)
     CGEvent.tapEnable(tap: eventTap, enable: true)
-    print("DEBUG: KeyListener initialized, event tap enabled")
+    debugLog("KeyListener initialized, event tap enabled")
   }
 
   deinit {
@@ -122,9 +122,9 @@ class KeyListener {
   }
 
   @objc private func keyboardInputSourceChanged(_ notification: Notification) {
-    print("DEBUG: Keyboard input source changed, rebuilding key code cache")
+    debugLog("Keyboard input source changed, rebuilding key code cache")
     keyCodeToKey = buildKeyCodeCache()
-    print("DEBUG: Key code cache rebuilt")
+    debugLog("Key code cache rebuilt")
   }
 
   static func handleEvent(proxy: CGEventTapProxy, type: CGEventType, event: CGEvent) -> Bool {
@@ -135,15 +135,15 @@ class KeyListener {
     if type == .keyDown || type == .keyUp || type == .flagsChanged {
       // Log all flagsChanged events to see what we're getting
       if type == .flagsChanged {
-        print(
-          "DEBUG: flagsChanged event - keyCode=\(keyCode), flags=\(event.flags.rawValue), maskAlphaShift=\(event.flags.contains(.maskAlphaShift))"
+        debugLog(
+          "flagsChanged event - keyCode=\(keyCode), flags=\(event.flags.rawValue), maskAlphaShift=\(event.flags.contains(.maskAlphaShift))"
         )
       }
       // Only log CapsLock-related events and J/K to reduce noise
       // CapsLock can be keyCode 57 (standard) or 62 (when disabled)
       if keyCode == 57 || keyCode == 62 || keyCode == 38 || keyCode == 40 {
-        print(
-          "DEBUG: Event type=\(type.rawValue), keyCode=\(keyCode), flags=\(event.flags.rawValue)")
+        debugLog(
+          "Event type=\(type.rawValue), keyCode=\(keyCode), flags=\(event.flags.rawValue)")
       }
     }
 
@@ -171,8 +171,8 @@ class KeyListener {
         let isPressed =
           keyCode == 57 ? event.flags.contains(.maskAlphaShift) : event.flags.rawValue > 256
         KeyListener.shared.isCapsLockPressed = isPressed
-        print(
-          "DEBUG: CapsLock flagsChanged (keyCode=\(keyCode)), flags=\(event.flags.rawValue), setting isCapsLockPressed=\(isPressed)"
+        debugLog(
+          "CapsLock flagsChanged (keyCode=\(keyCode)), flags=\(event.flags.rawValue), setting isCapsLockPressed=\(isPressed)"
         )
       }
 
@@ -184,8 +184,8 @@ class KeyListener {
       // Check if CapsLock key is released (keyCode 57 or 62 depending on keyboard/system)
       if keyCode == 57 || keyCode == 62 {
         KeyListener.shared.isCapsLockPressed = false
-        print(
-          "DEBUG: CapsLock keyUp detected (keyCode=\(keyCode)), setting isCapsLockPressed = false")
+        debugLog(
+          "CapsLock keyUp detected (keyCode=\(keyCode)), setting isCapsLockPressed = false")
       }
 
       return false
@@ -198,21 +198,21 @@ class KeyListener {
       // Check if CapsLock key itself is pressed (keyCode 57 or 62 depending on keyboard/system)
       if keyCode == 57 || keyCode == 62 {
         KeyListener.shared.isCapsLockPressed = true
-        print(
-          "DEBUG: CapsLock keyDown detected (keyCode=\(keyCode)), setting isCapsLockPressed = true")
+        debugLog(
+          "CapsLock keyDown detected (keyCode=\(keyCode)), setting isCapsLockPressed = true")
         return false  // Don't consume the event, let it pass through
       }
 
       // ESC key (keyCode 53) dismisses accessibility overlay
-      if keyCode == 53 && AccessibilityOverlay.shared.isVisible() {
-        AccessibilityOverlay.shared.hide()
+      if keyCode == 53 && HintOverlay.shared.isVisible {
+        HintOverlay.shared.hide()
         return true
       }
 
       // If accessibility overlay is visible, handle keyboard events for overlay
-      if AccessibilityOverlay.shared.isVisible() {
+      if HintOverlay.shared.isVisible {
         let char = KeyListener.keyCodeToString(keyCode: Int(keyCode), event: event)
-        if AccessibilityOverlay.shared.handleKeyboardEvent(keyCode: keyCode, characters: char) {
+        if HintOverlay.shared.handleKeyboardEvent(keyCode: keyCode, characters: char) {
           return true  // Event was handled by overlay
         }
         return false  // Let other events pass through
