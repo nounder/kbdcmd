@@ -359,8 +359,9 @@ struct AccessibilityOverlayView: View {
           .shadow(color: .black.opacity(0.5), radius: 1, x: 0, y: 1)
       }
     }
-    
-    return textContent
+
+    return
+      textContent
       .padding(.horizontal, 8)
       .padding(.vertical, 2)
       .frame(minWidth: minHintSize, minHeight: minHintSize)
@@ -369,24 +370,24 @@ struct AccessibilityOverlayView: View {
           // Base blur layer
           RoundedRectangle(cornerRadius: 3)
             .fill(.ultraThinMaterial)
-          
+
           // Color tint layer
           RoundedRectangle(cornerRadius: 3)
             .fill(isMatching ? Color.orange.opacity(0.3) : Color.blue.opacity(0.3))
-          
+
           // Subtle highlight for glass effect
           RoundedRectangle(cornerRadius: 3)
             .fill(
               LinearGradient(
                 colors: [
                   Color.white.opacity(0.3),
-                  Color.clear
+                  Color.clear,
                 ],
                 startPoint: .topLeading,
                 endPoint: .bottomTrailing
               )
             )
-          
+
           // Border
           RoundedRectangle(cornerRadius: 3)
             .strokeBorder(
@@ -399,11 +400,11 @@ struct AccessibilityOverlayView: View {
       .fixedSize()
       .position(x: posX, y: posY)
       .opacity(element.isEnabled ? 1.0 : 0.4)
-    .contentShape(Rectangle())
-    .onTapGesture {
-      print("DEBUG: Tapped hint '\(hint)' for '\(element.title)'")
-      onElementClick(element)
-    }
+      .contentShape(Rectangle())
+      .onTapGesture {
+        print("DEBUG: Tapped hint '\(hint)' for '\(element.title)'")
+        onElementClick(element)
+      }
   }
 
   /// Instructions banner at the top of the overlay

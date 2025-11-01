@@ -18,10 +18,10 @@ class KeyboardInputCoordinator: ObservableObject {
     self.elements = elements
     self.onElementClick = onElementClick
     self.onDismiss = onDismiss
-    
+
     // Generate hints of consistent length
     self.hints = Self.generateHints(count: elements.count)
-    
+
     // Create mapping from hint to element
     var mapping: [String: (index: Int, element: ClickableElement)] = [:]
     for (index, element) in elements.enumerated() {
@@ -34,26 +34,26 @@ class KeyboardInputCoordinator: ObservableObject {
 
   /// Characters to use for hints (excluding similar-looking ones: i, l, o, 0, 1)
   private static let hintCharacters = Array("asdfghjkwertyupzxcvbnmq")
-  
+
   /// Generates hint labels of consistent length for the given number of elements
   private static func generateHints(count: Int) -> [String] {
     guard count > 0 else { return [] }
-    
+
     let chars = hintCharacters
     let base = chars.count
-    
+
     // Calculate required length: ceil(log_base(count))
     let length = count == 1 ? 1 : Int(ceil(log(Double(count)) / log(Double(base))))
-    
+
     // Generate hints lexicographically
     var hints: [String] = []
     var indices = Array(repeating: 0, count: length)
-    
+
     for _ in 0..<count {
       // Convert indices to hint string (uppercase)
       let hint = indices.map { String(chars[$0]) }.joined().uppercased()
       hints.append(hint)
-      
+
       // Increment indices (like counting in base-N)
       var carry = 1
       for i in (0..<length).reversed() {
@@ -67,7 +67,7 @@ class KeyboardInputCoordinator: ObservableObject {
         }
       }
     }
-    
+
     return hints
   }
 
@@ -118,7 +118,9 @@ class KeyboardInputCoordinator: ObservableObject {
     return false
   }
 
-  func getMatchingElements(for prefix: String) -> [(index: Int, element: ClickableElement, hint: String)] {
+  func getMatchingElements(for prefix: String) -> [(
+    index: Int, element: ClickableElement, hint: String
+  )] {
     guard !prefix.isEmpty else {
       return hints.enumerated().compactMap { offset, hint in
         guard let mapped = hintToElement[hint] else { return nil }
@@ -131,7 +133,7 @@ class KeyboardInputCoordinator: ObservableObject {
       return (index: mapped.index, element: mapped.element, hint: hint)
     }
   }
-  
+
   /// Returns the hint for a given element index
   func getHint(forIndex index: Int) -> String? {
     return index < hints.count ? hints[index] : nil

@@ -30,7 +30,8 @@ class WindowChangePublisher: ObservableObject {
 
   private var axObservers: [AXObserver] = []
   private var workspaceObservers: [NSObjectProtocol] = []
-  private let backgroundQueue = DispatchQueue(label: "com.kbdcmd.windowPublisher", qos: .userInitiated)
+  private let backgroundQueue = DispatchQueue(
+    label: "com.kbdcmd.windowPublisher", qos: .userInitiated)
 
   func startMonitoring() {
     refresh()
@@ -47,10 +48,10 @@ class WindowChangePublisher: ObservableObject {
     // Perform heavy window querying on background queue to avoid blocking main thread
     backgroundQueue.async { [weak self] in
       guard let self = self else { return }
-      
+
       // Heavy work: query all apps, accessibility API, and window info
       let groups = self.getWindowGroups()
-      
+
       // Update @Published property on main thread for UI binding
       DispatchQueue.main.async {
         self.windowGroups = groups
@@ -148,7 +149,7 @@ class WindowChangePublisher: ObservableObject {
 
   private func getWindowGroups() -> [AppWindowGroup] {
     let runningApps = NSWorkspace.shared.runningApplications
-    
+
     // Build z-index map from CGWindowListCopyWindowInfo (returns windows in front-to-back order)
     let zIndexMap = buildZIndexMap()
 
@@ -263,24 +264,24 @@ class WindowChangePublisher: ObservableObject {
       )
     }.sorted { $0.appName < $1.appName }
   }
-  
+
   private func buildZIndexMap() -> [CGWindowID: Int] {
     var zIndexMap: [CGWindowID: Int] = [:]
-    
+
     let windowsInfo = CGWindowListCopyWindowInfo(
       [.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID)
-    
+
     guard let windowList = windowsInfo as? [[String: Any]] else {
       return zIndexMap
     }
-    
+
     // Windows are returned in front-to-back order, so index 0 is topmost
     for (index, windowDict) in windowList.enumerated() {
       if let windowId = windowDict[kCGWindowNumber as String] as? CGWindowID {
         zIndexMap[windowId] = index
       }
     }
-    
+
     return zIndexMap
   }
 }
