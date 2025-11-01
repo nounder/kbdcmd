@@ -221,14 +221,17 @@ struct AccessibilityOverlayView: View {
   }
 
   // Computed properties for matching elements
-  private var matchingElements: [(index: Int, element: ClickableElement)] {
+  private var matchingElements: [(index: Int, element: ClickableElement, hint: String)] {
     keyboardCoordinator.getMatchingElements(for: keyboardCoordinator.typedPrefix)
   }
 
   // Elements to display: all if no prefix, only matching if prefix exists
-  private var elementsToDisplay: [(index: Int, element: ClickableElement)] {
+  private var elementsToDisplay: [(index: Int, element: ClickableElement, hint: String)] {
     if keyboardCoordinator.typedPrefix.isEmpty {
-      return elements.enumerated().map { (index: $0.offset + 1, element: $0.element) }
+      return elements.enumerated().compactMap { offset, element in
+        guard let hint = keyboardCoordinator.getHint(forIndex: offset) else { return nil }
+        return (index: offset, element: element, hint: hint)
+      }
     }
     return matchingElements
   }
@@ -245,19 +248,20 @@ struct AccessibilityOverlayView: View {
             onDismiss()
           }
 
-        // Numbered hint badges for each element (only show matching ones when prefix is typed)
+        // Hint badges for each element (only show matching ones when prefix is typed)
         ForEach(Array(elementsToDisplay), id: \.element.id) { item in
           let elementIndex = item.index
           let element = item.element
+          let hint = item.hint
           let typedPrefix = keyboardCoordinator.typedPrefix
           let isMatching = matchingElements.contains { $0.index == elementIndex }
           let matchedPrefixLength =
             typedPrefix.isEmpty
-            ? 0 : (String(elementIndex).hasPrefix(typedPrefix) ? typedPrefix.count : 0)
+            ? 0 : (hint.hasPrefix(typedPrefix) ? typedPrefix.count : 0)
 
           elementHint(
             for: element,
-            index: elementIndex,
+            hint: hint,
             geometrySize: geometry.size,
             isMatching: isMatching,
             matchedPrefixLength: matchedPrefixLength
@@ -278,16 +282,16 @@ struct AccessibilityOverlayView: View {
 
   // MARK: - View Components
 
-  /// Creates a numbered hint badge at the top-left corner of an element with liquid glass effect
+  /// Creates a hint badge at the top-left corner of an element with liquid glass effect
   private func elementHint(
     for element: ClickableElement,
-    index: Int,
+    hint: String,
     geometrySize: CGSize,
     isMatching: Bool,
     matchedPrefixLength: Int
   ) -> some View {
     let minHintSize: CGFloat = 14
-    let indexString = String(index)
+    let hintString = hint
 
     // COORDINATE SYSTEM CONVERSION:
     // Accessibility API (kAXPositionAttribute) uses TOP-LEFT origin
@@ -315,9 +319,9 @@ struct AccessibilityOverlayView: View {
     let elementTopYInTopLeft = element.frame.minY  // Element top in top-left origin
     let elementTopYRelativeToWindow = elementTopYInTopLeft - windowTopYInTopLeft
 
-    // Debug logging for coordinate conversion (first element only to avoid spam)
-    if index == 1 {
-      print("DEBUG: Coordinate conversion for element \(index) '\(element.title)':")
+    // Debug logging for coordinate conversion (first hint only to avoid spam)
+    if hint == keyboardCoordinator.getHint(forIndex: 0) {
+      print("DEBUG: Coordinate conversion for element '\(hint)' ('\(element.title)'):")
       print("DEBUG:   Element frame (global, top-left origin): \(element.frame)")
       print("DEBUG:   Window frame (global, bottom-left origin): \(windowFrame)")
       print("DEBUG:   Primary screen height: \(primaryScreenHeight)")
@@ -338,23 +342,23 @@ struct AccessibilityOverlayView: View {
     let posX = viewX + minHintSize / 2
     let posY = elementTopYRelativeToWindow + minHintSize / 2
 
-    // Index number content
+    // Hint label content
     let textContent: some View = Group {
-      if matchedPrefixLength > 0 && matchedPrefixLength < indexString.count {
+      if matchedPrefixLength > 0 && matchedPrefixLength < hintString.count {
         // Show matched prefix in different color
         HStack(spacing: 0) {
-          Text(String(indexString.prefix(matchedPrefixLength)))
+          Text(String(hintString.prefix(matchedPrefixLength)))
             .font(.system(size: 14, weight: .regular))
             .foregroundColor(.white)
             .shadow(color: .black.opacity(0.5), radius: 1, x: 0, y: 1)
 
-          Text(String(indexString.dropFirst(matchedPrefixLength)))
+          Text(String(hintString.dropFirst(matchedPrefixLength)))
             .font(.system(size: 14, weight: .regular))
             .foregroundColor(.yellow)
             .shadow(color: .black.opacity(0.5), radius: 1, x: 0, y: 1)
         }
       } else {
-        Text(indexString)
+        Text(hintString.uppercased())
           .font(.system(size: 14, weight: .regular))
           .foregroundColor(.white)
           .shadow(color: .black.opacity(0.5), radius: 1, x: 0, y: 1)
@@ -402,7 +406,7 @@ struct AccessibilityOverlayView: View {
       .opacity(element.isEnabled ? 1.0 : 0.4)
     .contentShape(Rectangle())
     .onTapGesture {
-      print("DEBUG: Tapped hint \(index) for '\(element.title)'")
+      print("DEBUG: Tapped hint '\(hint)' for '\(element.title)'")
       onElementClick(element)
     }
   }
@@ -413,7 +417,7 @@ struct AccessibilityOverlayView: View {
       HStack {
         Spacer()
         VStack(spacing: 4) {
-          Text("Type number to select • Click hint to activate • Press ESC to dismiss")
+          Text("Press ESC to dismiss")
             .font(.system(size: 14, weight: .medium))
             .foregroundColor(.white)
 
