@@ -80,74 +80,33 @@ func cycleAppWindows() {
   }
 
   for axWindow in nonMinimizedWindows[1...].reversed() {
-    axWindow.raise()
+    _ = axWindow.raise()
   }
-}
-
-func getMenuBarItems(for app: AXUIElement) -> [AXUIElement]? {
-  var menuBar: AnyObject?
-  guard AXUIElementCopyAttributeValue(app, kAXMenuBarAttribute as CFString, &menuBar) == .success,
-    CFGetTypeID(menuBar) == AXUIElementGetTypeID()
-  else {
-    return nil
-  }
-
-  let menuBarElement = menuBar as! AXUIElement
-  return collectMenuItems(from: menuBarElement, maxDepth: 2)
-}
-
-func collectMenuItems(from element: AXUIElement, maxDepth: Int, currentDepth: Int = 0)
-  -> [AXUIElement]
-{
-  var result: [AXUIElement] = []
-
-  guard currentDepth < maxDepth else {
-    return result
-  }
-
-  var children: AnyObject?
-  guard
-    AXUIElementCopyAttributeValue(element, kAXChildrenAttribute as CFString, &children) == .success,
-    let childElements = children as? [AXUIElement]
-  else {
-    return result
-  }
-
-  for child in childElements {
-    result.append(child)
-    result.append(
-      contentsOf: collectMenuItems(from: child, maxDepth: maxDepth, currentDepth: currentDepth + 1))
-  }
-
-  return result
 }
 
 func hasKeyboardShortcut(_ menuItem: AXUIElement, character: String, exactModifiers: Int) -> Bool {
-  var cmdChar: AnyObject?
-  var cmdMods: AnyObject?
+  let values = menuItem.getAttributes(
+    kAXMenuItemCmdCharAttribute,
+    kAXMenuItemCmdModifiersAttribute,
+    kAXTitleAttribute
+  )
+  
+  let cmdChar = values[0] as? String
+  let cmdMods = values[1] as? Int
+  let title = values[2] as? String
 
-  guard
-    AXUIElementCopyAttributeValue(menuItem, kAXMenuItemCmdCharAttribute as CFString, &cmdChar)
-      == .success,
-    let cmdCharString = cmdChar as? String,
-    cmdCharString.lowercased() == character.lowercased()
+  guard let cmdCharString = cmdChar,
+        cmdCharString.lowercased() == character.lowercased()
   else {
     return false
   }
 
-  guard
-    AXUIElementCopyAttributeValue(menuItem, kAXMenuItemCmdModifiersAttribute as CFString, &cmdMods)
-      == .success,
-    let itemModifiers = cmdMods as? Int
-  else {
+  guard let itemModifiers = cmdMods else {
     return false
   }
 
   // Get title for debugging
-  var title: AnyObject?
-  let titleStr =
-    AXUIElementCopyAttributeValue(menuItem, kAXTitleAttribute as CFString, &title) == .success
-    ? (title as? String ?? "unknown") : "unknown"
+  let titleStr = title ?? "unknown"
   print(
     "Menu item: '\(titleStr)', char: '\(cmdCharString)', modifiers: \(itemModifiers), expected: \(exactModifiers)"
   )
@@ -159,51 +118,70 @@ func hasKeyboardShortcut(_ menuItem: AXUIElement, character: String, exactModifi
 }
 
 func createNewWindowViaMenu(for app: AXUIElement) -> Bool {
-  guard let menuItems = getMenuBarItems(for: app) else {
-    print("DEBUG: Could not get menu items")
+  // Get menu bar element
+  var menuBar: AnyObject?
+  guard AXUIElementCopyAttributeValue(app, kAXMenuBarAttribute as CFString, &menuBar) == .success,
+    CFGetTypeID(menuBar) == AXUIElementGetTypeID()
+  else {
+    print("DEBUG: Could not get menu bar")
     return false
   }
 
-  print("DEBUG: Got \(menuItems.count) menu items")
-
+  let menuBarElement = menuBar as! AXUIElement
+  
   // Get localized "File" menu name from system
   let localizedFileMenu = getLocalizedString(key: "File", tableName: "MenuCommands")
   let localizedNewWindow = getLocalizedString(key: "New Window", tableName: "MenuCommands")
 
   print("DEBUG: Looking for File menu: '\(localizedFileMenu)', New Window: '\(localizedNewWindow)'")
 
-  for menuItem in menuItems {
+  // First, find the File menu
+  let tree = AXTree(root: menuBarElement)
+  var fileMenu: AXUIElement?
+  
+  tree.traverse { element, depth in
+    guard depth <= 1 else { return .skipChildren }
+    
+    let values = element.getAttributes(kAXTitleAttribute)
+    if let title = values[0] as? String, title == localizedFileMenu {
+      fileMenu = element
+      return .stop
+    }
+    
+    return nil
+  }
+  
+  guard let fileMenu = fileMenu else {
+    print("DEBUG: Could not find File menu")
+    return false
+  }
+  
+  // Now traverse only within the File menu to find New Window
+  let fileTree = AXTree(root: fileMenu)
+  var foundItem: AXUIElement?
+  
+  fileTree.traverse { element, depth in
     // First try: Look for Cmd+N keyboard shortcut (most reliable, language-independent)
     // Note: modifiers value 0 means Cmd only, 1 means Cmd+Shift
     // We want ONLY Cmd (value = 0), not Cmd+Shift (value = 1)
-    if hasKeyboardShortcut(menuItem, character: "n", exactModifiers: 0) {
+    if hasKeyboardShortcut(element, character: "n", exactModifiers: 0) {
       print("DEBUG: Found matching shortcut, performing action")
-      return AXUIElementPerformAction(menuItem, kAXPressAction as CFString) == .success
+      foundItem = element
+      return .stop
     }
 
-    // Second try: Check if this is in File menu and has exact "New Window" title
-    var itemTitle: AnyObject?
-    if AXUIElementCopyAttributeValue(menuItem, kAXTitleAttribute as CFString, &itemTitle)
-      == .success,
-      let itemTitleString = itemTitle as? String,
-      itemTitleString == localizedNewWindow
-    {
-      var parent: AnyObject?
-      if AXUIElementCopyAttributeValue(menuItem, kAXParentAttribute as CFString, &parent)
-        == .success,
-        CFGetTypeID(parent) == AXUIElementGetTypeID()
-      {
-        let parentElement = parent as! AXUIElement
-        var parentTitle: AnyObject?
-        if AXUIElementCopyAttributeValue(parentElement, kAXTitleAttribute as CFString, &parentTitle)
-          == .success,
-          let parentTitleString = parentTitle as? String,
-          parentTitleString == localizedFileMenu
-        {
-          return AXUIElementPerformAction(menuItem, kAXPressAction as CFString) == .success
-        }
-      }
+    // Second try: Check if this has exact "New Window" title
+    let values = element.getAttributes(kAXTitleAttribute)
+    if let itemTitle = values[0] as? String, itemTitle == localizedNewWindow {
+      foundItem = element
+      return .stop
     }
+    
+    return nil
+  }
+  
+  if let item = foundItem {
+    return AXUIElementPerformAction(item, kAXPressAction as CFString) == .success
   }
 
   return false
@@ -306,7 +284,7 @@ func openOrFocusApp(_ appPath: String, ignoreMinimized: Bool = true) -> AppOpenR
               continue
             }
 
-            axWindow.raise()
+            _ = axWindow.raise()
           }
           return .focused
         }

@@ -76,7 +76,7 @@ class WindowSwitcherOverlay: NSObject {
       axWindow.set(Ax.minimizedAttr, false)
     }
 
-    axWindow.raise()
+    _ = axWindow.raise()
 
     DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
       WindowSwitcherOverlay.shared.hide()
