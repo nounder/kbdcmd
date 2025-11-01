@@ -50,8 +50,8 @@ class KeyboardInputCoordinator: ObservableObject {
     var indices = Array(repeating: 0, count: length)
     
     for _ in 0..<count {
-      // Convert indices to hint string
-      let hint = indices.map { String(chars[$0]) }.joined()
+      // Convert indices to hint string (uppercase)
+      let hint = indices.map { String(chars[$0]) }.joined().uppercased()
       hints.append(hint)
       
       // Increment indices (like counting in base-N)
@@ -92,7 +92,7 @@ class KeyboardInputCoordinator: ObservableObject {
     if let characters = event.characters?.lowercased(), let firstChar = characters.first,
       Self.hintCharacters.contains(firstChar)
     {
-      let newPrefix = typedPrefix + String(firstChar)
+      let newPrefix = typedPrefix + String(firstChar).uppercased()
 
       // Check if any hint matches this prefix
       let hasMatch = hints.contains { $0.hasPrefix(newPrefix) }

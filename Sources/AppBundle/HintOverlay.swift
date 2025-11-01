@@ -268,11 +268,6 @@ struct AccessibilityOverlayView: View {
           )
         }
 
-        // Show typed prefix indicator
-        if !keyboardCoordinator.typedPrefix.isEmpty {
-          typedPrefixIndicator
-        }
-
         // Instructions banner
         instructionsBanner
       }
@@ -358,7 +353,7 @@ struct AccessibilityOverlayView: View {
             .shadow(color: .black.opacity(0.5), radius: 1, x: 0, y: 1)
         }
       } else {
-        Text(hintString.uppercased())
+        Text(hintString)
           .font(.system(size: 14, weight: .regular))
           .foregroundColor(.white)
           .shadow(color: .black.opacity(0.5), radius: 1, x: 0, y: 1)
@@ -437,28 +432,6 @@ struct AccessibilityOverlayView: View {
         Spacer()
       }
       Spacer()
-    }
-  }
-
-  /// Typed prefix indicator showing what the user has typed so far
-  private var typedPrefixIndicator: some View {
-    VStack {
-      Spacer()
-      HStack {
-        Spacer()
-        Text("Typed: \(keyboardCoordinator.typedPrefix)")
-          .font(.system(size: 24, weight: .bold))
-          .foregroundColor(.yellow)
-          .padding(.horizontal, 20)
-          .padding(.vertical, 12)
-          .background(
-            RoundedRectangle(cornerRadius: 8)
-              .fill(Color.black.opacity(0.9))
-              .shadow(color: .black.opacity(0.5), radius: 8, x: 0, y: 4)
-          )
-          .padding(.bottom, 100)
-        Spacer()
-      }
     }
   }
 
