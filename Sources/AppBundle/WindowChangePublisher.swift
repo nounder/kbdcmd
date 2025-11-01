@@ -11,6 +11,10 @@ struct WindowInfo: Identifiable {
   let isMinimized: Bool
   let pid: pid_t
   let axWindow: AXUIElement?
+  let position: CGPoint?
+  let size: CGSize?
+  let zIndex: Int?
+  let timestamp: Date
 }
 
 struct AppWindowGroup: Identifiable {
@@ -92,9 +96,12 @@ class WindowChangePublisher: ObservableObject {
 
       let notifications = [
         kAXWindowCreatedNotification,
+        // thats probably lots of notifications, do we need it?
         kAXUIElementDestroyedNotification,
         kAXWindowMiniaturizedNotification,
         kAXWindowDeminiaturizedNotification,
+        kAXMovedNotification,
+        kAXResizedNotification,
       ]
 
       for notification in notifications {
@@ -129,6 +136,9 @@ class WindowChangePublisher: ObservableObject {
 
   private func getWindowGroups() -> [AppWindowGroup] {
     let runningApps = NSWorkspace.shared.runningApplications
+    
+    // Build z-index map from CGWindowListCopyWindowInfo (returns windows in front-to-back order)
+    let zIndexMap = buildZIndexMap()
 
     var groupedWindows: [String: [WindowInfo]] = [:]
 
@@ -178,8 +188,12 @@ class WindowChangePublisher: ObservableObject {
           continue
         }
 
+        // Get position and size
+        let position = axWindow.get(Ax.topLeftCornerAttr)
+        let size = axWindow.get(Ax.sizeAttr)
+
         // Check if window has a size (filter out invisible windows)
-        guard let size = axWindow.get(Ax.sizeAttr) else {
+        guard let size = size else {
           continue
         }
 
@@ -205,7 +219,11 @@ class WindowChangePublisher: ObservableObject {
           windowNumber: windowId,
           isMinimized: isMinimized,
           pid: app.processIdentifier,
-          axWindow: axWindow
+          axWindow: axWindow,
+          position: position,
+          size: size,
+          zIndex: zIndexMap[windowId],
+          timestamp: Date()
         )
 
         if groupedWindows[appName] == nil {
@@ -224,10 +242,33 @@ class WindowChangePublisher: ObservableObject {
           if $0.isMinimized != $1.isMinimized {
             return !$0.isMinimized
           }
+          if let z0 = $0.zIndex, let z1 = $1.zIndex {
+            return z0 < z1
+          }
           return $0.title < $1.title
         },
         pid: windows.first?.pid ?? 0
       )
     }.sorted { $0.appName < $1.appName }
+  }
+  
+  private func buildZIndexMap() -> [CGWindowID: Int] {
+    var zIndexMap: [CGWindowID: Int] = [:]
+    
+    let windowsInfo = CGWindowListCopyWindowInfo(
+      [.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID)
+    
+    guard let windowList = windowsInfo as? [[String: Any]] else {
+      return zIndexMap
+    }
+    
+    // Windows are returned in front-to-back order, so index 0 is topmost
+    for (index, windowDict) in windowList.enumerated() {
+      if let windowId = windowDict[kCGWindowNumber as String] as? CGWindowID {
+        zIndexMap[windowId] = index
+      }
+    }
+    
+    return zIndexMap
   }
 }
