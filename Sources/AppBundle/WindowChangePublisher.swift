@@ -30,6 +30,7 @@ class WindowChangePublisher: ObservableObject {
 
   private var axObservers: [AXObserver] = []
   private var workspaceObservers: [NSObjectProtocol] = []
+  private let backgroundQueue = DispatchQueue(label: "com.kbdcmd.windowPublisher", qos: .userInitiated)
 
   func startMonitoring() {
     refresh()
@@ -43,7 +44,18 @@ class WindowChangePublisher: ObservableObject {
   }
 
   private func refresh() {
-    windowGroups = getWindowGroups()
+    // Perform heavy window querying on background queue to avoid blocking main thread
+    backgroundQueue.async { [weak self] in
+      guard let self = self else { return }
+      
+      // Heavy work: query all apps, accessibility API, and window info
+      let groups = self.getWindowGroups()
+      
+      // Update @Published property on main thread for UI binding
+      DispatchQueue.main.async {
+        self.windowGroups = groups
+      }
+    }
   }
 
   private func setupWorkspaceNotifications() {
