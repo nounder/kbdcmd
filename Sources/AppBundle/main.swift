@@ -79,9 +79,9 @@ func cycleAppWindows() {
     return
   }
 
-  for axWindow in nonMinimizedWindows[1...].reversed() {
-    _ = axWindow.raise()
-  }
+  // Raise the last window to properly cycle through all windows
+  // When raised, it becomes the frontmost, creating a rotation effect
+  _ = nonMinimizedWindows.last!.raise()
 }
 
 func hasKeyboardShortcut(_ menuItem: AXUIElement, character: String, exactModifiers: Int) -> Bool {
@@ -270,22 +270,14 @@ func openOrFocusApp(_ appPath: String, ignoreMinimized: Bool = true) -> AppOpenR
 
       // If app is already frontmost and has multiple windows, cycle through them
       if isAlreadyFrontmost && axWindows.count > 1 {
-        let manager = WindowManager.main
-        let appWindows = manager.listWindows().filter {
-          $0.app.processIdentifier == runningApp.processIdentifier
+        let nonMinimizedWindows = axWindows.filter {
+          $0.get(Ax.minimizedAttr) != true
         }
 
-        if appWindows.count > 1 {
-          for (i, _) in appWindows[1...].reversed().enumerated() {
-            let ti = axWindows.count - i - 1
-            let axWindow = axWindows[ti]
-
-            if axWindow.get(Ax.minimizedAttr) == true {
-              continue
-            }
-
-            _ = axWindow.raise()
-          }
+        if nonMinimizedWindows.count > 1 {
+          // Raise the last window to properly cycle through all windows
+          // When raised, it becomes the frontmost, creating a rotation effect
+          _ = nonMinimizedWindows.last!.raise()
           return .focused
         }
       }
