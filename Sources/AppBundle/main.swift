@@ -90,13 +90,13 @@ func hasKeyboardShortcut(_ menuItem: AXUIElement, character: String, exactModifi
     kAXMenuItemCmdModifiersAttribute,
     kAXTitleAttribute
   )
-  
+
   let cmdChar = values[0] as? String
   let cmdMods = values[1] as? Int
   let title = values[2] as? String
 
   guard let cmdCharString = cmdChar,
-        cmdCharString.lowercased() == character.lowercased()
+    cmdCharString.lowercased() == character.lowercased()
   else {
     return false
   }
@@ -128,7 +128,7 @@ func createNewWindowViaMenu(for app: AXUIElement) -> Bool {
   }
 
   let menuBarElement = menuBar as! AXUIElement
-  
+
   // Get localized "File" menu name from system
   let localizedFileMenu = getLocalizedString(key: "File", tableName: "MenuCommands")
   let localizedNewWindow = getLocalizedString(key: "New Window", tableName: "MenuCommands")
@@ -138,28 +138,28 @@ func createNewWindowViaMenu(for app: AXUIElement) -> Bool {
   // First, find the File menu
   let tree = AXTree(root: menuBarElement)
   var fileMenu: AXUIElement?
-  
+
   tree.traverse { element, depth in
     guard depth <= 1 else { return .skipChildren }
-    
+
     let values = element.getAttributes(kAXTitleAttribute)
     if let title = values[0] as? String, title == localizedFileMenu {
       fileMenu = element
       return .stop
     }
-    
+
     return nil
   }
-  
+
   guard let fileMenu = fileMenu else {
     print("DEBUG: Could not find File menu")
     return false
   }
-  
+
   // Now traverse only within the File menu to find New Window
   let fileTree = AXTree(root: fileMenu)
   var foundItem: AXUIElement?
-  
+
   fileTree.traverse { element, depth in
     // First try: Look for Cmd+N keyboard shortcut (most reliable, language-independent)
     // Note: modifiers value 0 means Cmd only, 1 means Cmd+Shift
@@ -176,10 +176,10 @@ func createNewWindowViaMenu(for app: AXUIElement) -> Bool {
       foundItem = element
       return .stop
     }
-    
+
     return nil
   }
-  
+
   if let item = foundItem {
     return AXUIElementPerformAction(item, kAXPressAction as CFString) == .success
   }
@@ -330,7 +330,7 @@ func cmdSwitchDesktop(_ desktopNumber: String) {
 
 func registerDefaultKeybindings() {
   let kb = Keybindings.shared
-  
+
   // Right Command + Letter keybindings (single-key sequences)
   kb.register([KeyPress(key: .character("L"), flags: .maskCmdRight)]) { _ in
     cycleAppWindows()
@@ -348,13 +348,13 @@ func registerDefaultKeybindings() {
     AccessibilityOverlay.shared.show()
   }
 
-  // CapsLock + J/K for smooth scrolling
+  // CapsLock + J/K for scrolling
   kb.register([KeyPress(key: .character("J"), flags: .maskAlphaShift)]) { _ in
-    SmoothScrollManager.shared.scrollUnits(-10)  // Scroll down
+    Scrolling.shared.smoothScroll(-120)
   }
 
   kb.register([KeyPress(key: .character("K"), flags: .maskAlphaShift)]) { _ in
-    SmoothScrollManager.shared.scrollUnits(10)  // Scroll up
+    Scrolling.shared.smoothScroll(120)
   }
 
   kb.register([KeyPress(key: .character("V"), flags: .maskCmdRight)]) { _ in

@@ -174,11 +174,6 @@ class KeyListener {
         print(
           "DEBUG: CapsLock flagsChanged (keyCode=\(keyCode)), flags=\(event.flags.rawValue), setting isCapsLockPressed=\(isPressed)"
         )
-
-        // Stop scrolling if CapsLock is released
-        if !isPressed {
-          SmoothScrollManager.shared.stop()
-        }
       }
 
       return false
@@ -191,7 +186,6 @@ class KeyListener {
         KeyListener.shared.isCapsLockPressed = false
         print(
           "DEBUG: CapsLock keyUp detected (keyCode=\(keyCode)), setting isCapsLockPressed = false")
-        SmoothScrollManager.shared.stop()
       }
 
       return false
