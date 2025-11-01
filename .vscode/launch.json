@@ -12,7 +12,7 @@
             "preLaunchTask": "swift: Build Debug kbdcmd"
         },
         {
-            "type": "swift-lldb",
+            "type": "lldb",
             "request": "launch",
             "args": [],
             "cwd": "${workspaceFolder:kbdcmd}",
@@ -21,7 +21,7 @@
             "preLaunchTask": "swift: Build Release kbdcmd"
         },
         {
-            "type": "swift-lldb",
+            "type": "lldb",
             "request": "launch",
             "args": [],
             "cwd": "${workspaceFolder:kbdcmd}",
