@@ -278,7 +278,7 @@ struct AccessibilityOverlayView: View {
 
   // MARK: - View Components
 
-  /// Creates a numbered square hint badge at the left edge, vertically centered on an element
+  /// Creates a numbered hint badge at the top-left corner of an element with liquid glass effect
   private func elementHint(
     for element: ClickableElement,
     index: Int,
@@ -286,7 +286,7 @@ struct AccessibilityOverlayView: View {
     isMatching: Bool,
     matchedPrefixLength: Int
   ) -> some View {
-    let hintSize: CGFloat = 28
+    let minHintSize: CGFloat = 14
     let indexString = String(index)
 
     // COORDINATE SYSTEM CONVERSION:
@@ -297,7 +297,7 @@ struct AccessibilityOverlayView: View {
     // Conversion steps:
     // 1. X: Direct conversion (same horizontal system)
     // 2. Y: Convert window frame from bottom-left to top-left, then calculate relative position
-    // Position hint at the left edge horizontally, centered vertically
+    // Position hint at the top-left corner of the element
     let viewX = element.frame.minX - windowFrame.minX
 
     // Y conversion: Both Accessibility API and SwiftUI use top-left origin
@@ -312,8 +312,8 @@ struct AccessibilityOverlayView: View {
     // windowFrame.maxY is the top edge in bottom-left origin
     // In top-left origin, this would be: screenHeight - windowFrame.maxY
     let windowTopYInTopLeft = primaryScreenHeight - windowFrame.maxY  // Window top in top-left origin
-    let elementCenterYInTopLeft = element.frame.midY  // Element center in top-left origin
-    let elementCenterYRelativeToWindow = elementCenterYInTopLeft - windowTopYInTopLeft
+    let elementTopYInTopLeft = element.frame.minY  // Element top in top-left origin
+    let elementTopYRelativeToWindow = elementTopYInTopLeft - windowTopYInTopLeft
 
     // Debug logging for coordinate conversion (first element only to avoid spam)
     if index == 1 {
@@ -322,51 +322,84 @@ struct AccessibilityOverlayView: View {
       print("DEBUG:   Window frame (global, bottom-left origin): \(windowFrame)")
       print("DEBUG:   Primary screen height: \(primaryScreenHeight)")
       print("DEBUG:   Window top in top-left origin: \(windowTopYInTopLeft)")
-      print("DEBUG:   Element center in top-left origin: \(elementCenterYInTopLeft)")
-      print("DEBUG:   Element center Y relative to window top: \(elementCenterYRelativeToWindow)")
+      print("DEBUG:   Element top in top-left origin: \(elementTopYInTopLeft)")
+      print("DEBUG:   Element top Y relative to window top: \(elementTopYRelativeToWindow)")
       print(
-        "DEBUG:   Calculated viewX: \(viewX), viewY: \(elementCenterYRelativeToWindow) (top-left origin)"
+        "DEBUG:   Calculated viewX: \(viewX), viewY: \(elementTopYRelativeToWindow) (top-left origin)"
       )
       print("DEBUG:   Geometry size: \(geometrySize)")
     }
 
     // Use .position() for absolute positioning within the geometry
     // .position() sets the CENTER of the view at the given coordinates
-    // X: Position hint center at left edge (minX) by adding half hint size
-    // Y: Position hint center at element center (midY), no adjustment needed
-    let posX = viewX + hintSize / 2
-    let posY = elementCenterYRelativeToWindow
+    // X: Position hint center at left edge (minX) by adding half minimum hint size
+    // Y: Position hint center at top edge (minY) by adding half minimum hint size
+    // Note: The badge will expand from center, so multi-digit numbers will grow appropriately
+    let posX = viewX + minHintSize / 2
+    let posY = elementTopYRelativeToWindow + minHintSize / 2
 
-    return ZStack {
-      // Square background - highlight if matching typed prefix
-      RoundedRectangle(cornerRadius: 4)
-        .fill(isMatching ? Color.orange : Color.green)
-        .overlay(
-          RoundedRectangle(cornerRadius: 4)
-            .stroke(isMatching ? Color.white : Color.clear, lineWidth: 2)
-        )
-
-      // Index number with highlighting for matched prefix
+    // Index number content
+    let textContent: some View = Group {
       if matchedPrefixLength > 0 && matchedPrefixLength < indexString.count {
         // Show matched prefix in different color
         HStack(spacing: 0) {
           Text(String(indexString.prefix(matchedPrefixLength)))
-            .font(.system(size: 13, weight: .bold))
+            .font(.system(size: 14, weight: .regular))
             .foregroundColor(.white)
+            .shadow(color: .black.opacity(0.5), radius: 1, x: 0, y: 1)
 
           Text(String(indexString.dropFirst(matchedPrefixLength)))
-            .font(.system(size: 13, weight: .bold))
+            .font(.system(size: 14, weight: .regular))
             .foregroundColor(.yellow)
+            .shadow(color: .black.opacity(0.5), radius: 1, x: 0, y: 1)
         }
       } else {
         Text(indexString)
-          .font(.system(size: 13, weight: .bold))
+          .font(.system(size: 14, weight: .regular))
           .foregroundColor(.white)
+          .shadow(color: .black.opacity(0.5), radius: 1, x: 0, y: 1)
       }
     }
-    .frame(width: hintSize, height: hintSize)
-    .position(x: posX, y: posY)
-    .opacity(element.isEnabled ? 1.0 : 0.5)
+    
+    return textContent
+      .padding(.horizontal, 8)
+      .padding(.vertical, 2)
+      .frame(minWidth: minHintSize, minHeight: minHintSize)
+      .background(
+        ZStack {
+          // Base blur layer
+          RoundedRectangle(cornerRadius: 3)
+            .fill(.ultraThinMaterial)
+          
+          // Color tint layer
+          RoundedRectangle(cornerRadius: 3)
+            .fill(isMatching ? Color.orange.opacity(0.3) : Color.blue.opacity(0.3))
+          
+          // Subtle highlight for glass effect
+          RoundedRectangle(cornerRadius: 3)
+            .fill(
+              LinearGradient(
+                colors: [
+                  Color.white.opacity(0.3),
+                  Color.clear
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+              )
+            )
+          
+          // Border
+          RoundedRectangle(cornerRadius: 3)
+            .strokeBorder(
+              isMatching ? Color.orange.opacity(0.6) : Color.white.opacity(0.5),
+              lineWidth: 0.5
+            )
+        }
+        .shadow(color: Color.black.opacity(0.3), radius: 2, x: 0, y: 1)
+      )
+      .fixedSize()
+      .position(x: posX, y: posY)
+      .opacity(element.isEnabled ? 1.0 : 0.4)
     .contentShape(Rectangle())
     .onTapGesture {
       print("DEBUG: Tapped hint \(index) for '\(element.title)'")
