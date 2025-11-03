@@ -84,35 +84,6 @@ func cycleAppWindows() {
   _ = nonMinimizedWindows.last!.raise()
 }
 
-func hasKeyboardShortcut(_ menuItem: AXUIElement, character: String, exactModifiers: Int) -> Bool {
-  let values = menuItem.getAttributes(
-    kAXMenuItemCmdCharAttribute,
-    kAXMenuItemCmdModifiersAttribute,
-    kAXTitleAttribute
-  )
-
-  let cmdChar = values[0] as? String
-  let cmdMods = values[1] as? Int
-  let title = values[2] as? String
-
-  guard let cmdCharString = cmdChar,
-    cmdCharString.lowercased() == character.lowercased()
-  else {
-    return false
-  }
-
-  guard let itemModifiers = cmdMods else {
-    return false
-  }
-
-  // Get title for debugging
-
-  // Must match exactly - no extra modifiers allowed
-  // Cmd only = 1, Cmd+Shift = 3, Cmd+Option = 5, Cmd+Control = 9
-  // We need strict equality to avoid matching Cmd+Shift+N when looking for Cmd+N
-  return itemModifiers == exactModifiers
-}
-
 func createNewWindowViaMenu(for app: AXUIElement) -> Bool {
   // Get menu bar element
   var menuBar: AnyObject?
@@ -157,16 +128,8 @@ func createNewWindowViaMenu(for app: AXUIElement) -> Bool {
   var foundItem: AXUIElement?
 
   fileTree.traverse { element, depth in
-    // First try: Look for Cmd+N keyboard shortcut (most reliable, language-independent)
-    // Note: modifiers value 0 means Cmd only, 1 means Cmd+Shift
-    // We want ONLY Cmd (value = 0), not Cmd+Shift (value = 1)
-    if hasKeyboardShortcut(element, character: "n", exactModifiers: 0) {
-      debugLog("Found matching shortcut, performing action")
-      foundItem = element
-      return .stop
-    }
-
-    // Second try: Check if this has exact "New Window" title
+    // Search by exact "New Window" title to avoid conflicts with other shortcuts
+    // (e.g., Mail.app uses Cmd+N for "New Message" instead of "New Window")
     let values = element.getAttributes(kAXTitleAttribute)
     if let itemTitle = values[0] as? String, itemTitle == localizedNewWindow {
       foundItem = element
