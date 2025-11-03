@@ -11,31 +11,42 @@ struct ClickableElement: Identifiable {
   let isEnabled: Bool
 }
 
-/// Helper class for interacting with Accessibility API to collect clickable elements
-class AXHelpers {
+/// Stateful interface for traversing accessibility tree with context tracking
+class AXInterface {
+  private let root: AXUIElement
+  private var currentHierarchy: [AXUIElement] = []
+  private var scrollAreas: [CGRect] = []
+  private var chromeAreas: [CGRect] = []
 
-  /// Collects all visible clickable elements from the frontmost application window
-  static func collectClickableElements() -> [ClickableElement] {
+  // Computed properties for accessing current context
+  private var currentScrollArea: CGRect? { scrollAreas.last }
+  private var currentChromeArea: CGRect? { chromeAreas.last }
+  private var currentIsInChrome: Bool { !chromeAreas.isEmpty }
+
+  // Element type for tracking during traversal
+  enum ElementType {
+    case chrome
+    case scrollContainer
+    case regular
+  }
+
+  init(root: AXUIElement) {
+    self.root = root
+  }
+
+  /// Collects all visible clickable elements from the window
+  func collectClickableElements() -> [ClickableElement] {
     var clickableElements: [ClickableElement] = []
+    var roleStats: [String: Int] = [:]
+    var elementCount = 0
 
-    guard let frontmostApp = NSWorkspace.shared.frontmostApplication else {
-      debugLog("No frontmost app")
-      return []
-    }
-
-    let axApp = AXUIElementCreateApplication(frontmostApp.processIdentifier)
-
-    // Enhanced UI mode may help expose more web content in some browsers
-    axApp.set(Ax.enhancedUserInterfaceAttr, true)
-
-    guard let focusedWindow = axApp.get(Ax.focusedWindowAttr) else {
-      return []
-    }
+    // Support multiple monitors by checking all screen bounds
+    let allScreenBounds = NSScreen.screens.map { $0.frame }
 
     // Get window frame for visibility checking
     let windowFrame: CGRect?
-    if let windowPosition = focusedWindow.get(Ax.topLeftCornerAttr),
-      let windowSize = focusedWindow.get(Ax.sizeAttr)
+    if let windowPosition = root.get(Ax.topLeftCornerAttr),
+      let windowSize = root.get(Ax.sizeAttr)
     {
       // Convert window position from top-left origin to bottom-left origin for NSWindow
       let primaryScreenHeight = NSScreen.screens.first?.frame.height ?? 0
@@ -47,18 +58,11 @@ class AXHelpers {
       windowFrame = nil
     }
 
-    // Support multiple monitors by checking all screen bounds
-    let allScreenBounds = NSScreen.screens.map { $0.frame }
-
-    var roleStats: [String: Int] = [:]
-    var elementCount = 0
-
-    // Recursively traverse accessibility tree starting from focused window
-    collectElementsRecursively(
-      from: focusedWindow,
+    // Traverse accessibility tree starting from window root
+    traverseElement(
+      root,
       allScreenBounds: allScreenBounds,
       windowFrame: windowFrame,
-      containerFrame: nil,
       roleStats: &roleStats,
       elementCount: &elementCount,
       clickableElements: &clickableElements,
@@ -69,18 +73,128 @@ class AXHelpers {
     return clickableElements
   }
 
+  /// Enters an element during traversal, updating context state
+  /// Returns the element type so exitElement knows which stacks to pop
+  private func enterElement(
+    _ element: AXUIElement,
+    _ role: String?,
+    _ position: CGPoint?,
+    _ size: CGSize?
+  ) -> ElementType {
+    // Always push to hierarchy
+    currentHierarchy.append(element)
+
+    // Check if this is a chrome element
+    if let role = role, isChrome(element, role) {
+      if let position = position, let size = size {
+        let chromeBounds = CGRect(
+          x: position.x, y: position.y, width: size.width, height: size.height)
+        chromeAreas.append(chromeBounds)
+        debugLog("Entered chrome element with role: \(role), bounds: \(chromeBounds)")
+      }
+      return .chrome
+    }
+
+    // Check if this is a scroll container
+    if let role = role,
+      let scrollViewport = getScrollContainerViewport(element, role, position, size)
+    {
+      scrollAreas.append(scrollViewport)
+      debugLog("Entered scroll container with role: \(role), viewport: \(scrollViewport)")
+      return .scrollContainer
+    }
+
+    return .regular
+  }
+
+  /// Exits an element during traversal, popping from appropriate stacks
+  private func exitElement(_ type: ElementType) {
+    // Always pop from hierarchy
+    if !currentHierarchy.isEmpty {
+      currentHierarchy.removeLast()
+    }
+
+    // Pop from specific stacks based on element type
+    switch type {
+    case .chrome:
+      if !chromeAreas.isEmpty {
+        chromeAreas.removeLast()
+      }
+    case .scrollContainer:
+      if !scrollAreas.isEmpty {
+        scrollAreas.removeLast()
+      }
+    case .regular:
+      break
+    }
+  }
+
+  /// Checks if an element is window chrome (toolbar, title bar, window controls)
+  private func isChrome(_ element: AXUIElement, _ role: String) -> Bool {
+    // Check for toolbar role
+    if role == "AXToolbar" {
+      return true
+    }
+
+    // Check for toolbar subrole
+    if let subrole = element.get(Ax.subroleAttr) {
+      if subrole == "AXToolbar" {
+        return true
+      }
+    }
+
+    // Check if this is a window control button
+    if role == "AXButton" {
+      if let subrole = element.get(Ax.subroleAttr) {
+        let windowControlSubroles = [
+          "AXCloseButton",
+          "AXMinimizeButton",
+          "AXZoomButton",
+        ]
+        if windowControlSubroles.contains(subrole) {
+          return true
+        }
+      }
+    }
+
+    return false
+  }
+
+  /// Gets the visible viewport bounds for a scroll container, if applicable
+  private func getScrollContainerViewport(
+    _ element: AXUIElement,
+    _ role: String,
+    _ position: CGPoint?,
+    _ size: CGSize?
+  ) -> CGRect? {
+    guard role == "AXScrollArea" || role == "AXWebArea" else {
+      return nil
+    }
+
+    guard let position = position, let size = size else {
+      return nil
+    }
+
+    let viewport = CGRect(x: position.x, y: position.y, width: size.width, height: size.height)
+
+    // If we already have a parent scroll container, intersect to get the visible area
+    if let parentViewport = currentScrollArea {
+      return parentViewport.intersection(viewport)
+    }
+
+    return viewport
+  }
+
   /// Recursively traverses the accessibility tree to find clickable elements
   ///
-  /// This function implements several important filtering rules:
-  /// 1. Only processes elements within recursion depth limit
-  /// 2. Tracks scroll containers (AXScrollArea, AXWebArea) to determine visibility
-  /// 3. Filters out elements that are off-screen (multi-monitor aware)
-  /// 4. Filters out elements scrolled outside their container's visible bounds
-  private static func collectElementsRecursively(
-    from element: AXUIElement,
+  /// Uses context tracking to filter elements based on:
+  /// 1. Chrome context (toolbars, window controls)
+  /// 2. Scroll container visibility (50% threshold)
+  /// 3. Screen bounds (multi-monitor aware)
+  private func traverseElement(
+    _ element: AXUIElement,
     allScreenBounds: [CGRect],
     windowFrame: CGRect?,
-    containerFrame: CGRect?,
     roleStats: inout [String: Int],
     elementCount: inout Int,
     clickableElements: inout [ClickableElement],
@@ -93,131 +207,135 @@ class AXHelpers {
 
     // OPTIMIZATION: Check role first (cheapest attribute) before fetching others
     let role = element.get(Ax.roleAttr)
-    guard let role = role else {
-      // No role means we can skip this element entirely
-      processChildren(
-        of: element,
-        allScreenBounds: allScreenBounds,
-        windowFrame: windowFrame,
-        containerFrame: containerFrame,
-        roleStats: &roleStats,
-        elementCount: &elementCount,
-        clickableElements: &clickableElements,
-        depth: depth
-      )
-      return
-    }
 
-    roleStats[role, default: 0] += 1
-
-    // Only fetch position/size if this is a link, button, scroll container, or potentially a tab button
-    let isLink = role == "AXLink"
-    let isButton = role == "AXButton"
-    let isRadioButton = role == "AXRadioButton"
-    let isScrollContainer = role == "AXScrollArea" || role == "AXWebArea"
-
-    // Check if this is a tab button (can have role AXButton or AXRadioButton)
-    let isTab = isTabButton(element: element)
-
-    // Debug logging for button detection
-    if isButton {
-      debugLog("Found button element with role: \(role)")
-    }
-    if isTab {
-      debugLog("Found tab button with role: \(role)")
-    }
-
-    guard isLink || isButton || isTab || isScrollContainer else {
-      // Skip fetching attributes for non-link, non-button, non-tab, non-container elements
-      processChildren(
-        of: element,
-        allScreenBounds: allScreenBounds,
-        windowFrame: windowFrame,
-        containerFrame: containerFrame,
-        roleStats: &roleStats,
-        elementCount: &elementCount,
-        clickableElements: &clickableElements,
-        depth: depth
-      )
-      return
+    // Track role stats
+    if let role = role {
+      roleStats[role, default: 0] += 1
     }
 
     // OPTIMIZATION: Batch fetch common attributes for links, buttons, and scroll containers
     let attributes = getBatchAttributes(element: element)
 
-    // Update container bounds when we encounter scroll areas
-    // Nested containers are intersected to get the most restrictive visible bounds
-    let currentContainerFrame = updateContainerFrame(
-      existingContainer: containerFrame,
-      element: element,
-      role: role,
-      position: attributes.position,
-      size: attributes.size
-    )
+    // Enter element context - this updates our state stacks
+    let elementType = enterElement(element, role, attributes.position, attributes.size)
 
-    // Check if this is a clickable link, button, or tab that should be displayed
-    if isLink || isButton || isTab,
-      let position = attributes.position,
+    // Defer exit to ensure we always pop from stacks
+    defer {
+      exitElement(elementType)
+    }
+
+    // If we're in chrome, skip processing this element's clickability
+    // but still traverse children in case there's content below
+    guard !currentIsInChrome else {
+      processChildren(
+        of: element,
+        allScreenBounds: allScreenBounds,
+        windowFrame: windowFrame,
+        roleStats: &roleStats,
+        elementCount: &elementCount,
+        clickableElements: &clickableElements,
+        depth: depth
+      )
+      return
+    }
+
+    // Check if this is a clickable element type
+    let isLink = role == "AXLink"
+    let isButton = role == "AXButton"
+    let isRadioButton = role == "AXRadioButton"
+    let isTab = isTabButton(element: element)
+
+    // Debug logging for button detection
+    if isButton {
+      debugLog("Found button element with role: \(role ?? "nil")")
+    }
+    if isTab {
+      debugLog("Found tab button with role: \(role ?? "nil")")
+    }
+
+    // Only process clickable elements
+    guard isLink || isButton || isRadioButton || isTab else {
+      // Skip non-clickable elements but traverse their children
+      processChildren(
+        of: element,
+        allScreenBounds: allScreenBounds,
+        windowFrame: windowFrame,
+        roleStats: &roleStats,
+        elementCount: &elementCount,
+        clickableElements: &clickableElements,
+        depth: depth
+      )
+      return
+    }
+
+    // Validate we have position and size
+    guard let position = attributes.position,
       let size = attributes.size,
       isValidElementSize(size)
-    {
-
-      // Filter out window control buttons (close, minimize, full screen)
-      // But always include tab buttons
-      if isButton && !isTabButton(element: element) && isWindowControlButton(element: element) {
-        debugLog("Filtering out window control button")
-        // Don't process children of window control buttons
-        return
-      }
-
-      let frame = CGRect(x: position.x, y: position.y, width: size.width, height: size.height)
-      let defaultTitle = isLink ? "Link" : (isTab ? "Tab" : "Button")
-      let displayTitle = attributes.title ?? getElementDescription(element) ?? defaultTitle
-      let trimmedTitle = displayTitle.trimmingCharacters(in: .whitespacesAndNewlines)
-      let finalTitle = trimmedTitle.isEmpty ? defaultTitle : trimmedTitle
-
-      // Debug logging for buttons and tabs
-      if isButton || isTab {
-        debugLog(
-          "Processing \(isTab ? "tab" : "button") '\(finalTitle)' at frame: \(frame), enabled: \(attributes.enabled ?? true)"
-        )
-        if let container = currentContainerFrame {
-          debugLog("Container frame: \(container)")
-        } else {
-          debugLog("Container frame: nil")
-        }
-      }
-
-      // Apply visibility filters
-      if isElementVisible(
-        frame: frame,
-        screenBounds: allScreenBounds,
-        windowFrame: windowFrame,
-        containerFrame: currentContainerFrame,
-        title: finalTitle)
-      {
-
-        if isButton || isTab {
-          debugLog("Adding \(isTab ? "tab" : "button") '\(finalTitle)' to clickable elements")
-        }
-
-        let clickable = ClickableElement(
-          axElement: element,
-          frame: frame,
-          title: finalTitle,
-          role: role,
-          isEnabled: attributes.enabled ?? true
-        )
-        clickableElements.append(clickable)
-      } else if isButton || isTab {
-        debugLog("\(isTab ? "Tab" : "Button") '\(finalTitle)' filtered out by visibility check")
-      }
-    } else if isButton || isTab {
+    else {
       let positionStr = attributes.position.map { "\($0)" } ?? "nil"
       let sizeStr = attributes.size.map { "\($0)" } ?? "nil"
       debugLog(
-        "\(isTab ? "Tab" : "Button") filtered out - missing position/size or invalid size. position: \(positionStr), size: \(sizeStr)"
+        "\(isTab ? "Tab" : (isButton ? "Button" : "Link")) filtered out - missing position/size or invalid size. position: \(positionStr), size: \(sizeStr)"
       )
+      processChildren(
+        of: element,
+        allScreenBounds: allScreenBounds,
+        windowFrame: windowFrame,
+        roleStats: &roleStats,
+        elementCount: &elementCount,
+        clickableElements: &clickableElements,
+        depth: depth
+      )
+      return
+    }
+
+    // Filter out window control buttons (close, minimize, full screen)
+    // But always include tab buttons
+    if isButton && !isTab && isWindowControlButton(element: element) {
+      debugLog("Filtering out window control button")
+      // Don't process children of window control buttons
+      return
+    }
+
+    let frame = CGRect(x: position.x, y: position.y, width: size.width, height: size.height)
+    let defaultTitle = isLink ? "Link" : (isTab ? "Tab" : "Button")
+    let displayTitle = attributes.title ?? getElementDescription(element) ?? defaultTitle
+    let trimmedTitle = displayTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+    let finalTitle = trimmedTitle.isEmpty ? defaultTitle : trimmedTitle
+
+    // Debug logging for buttons and tabs
+    if isButton || isTab {
+      debugLog(
+        "Processing \(isTab ? "tab" : "button") '\(finalTitle)' at frame: \(frame), enabled: \(attributes.enabled ?? true)"
+      )
+      if let scrollArea = currentScrollArea {
+        debugLog("Current scroll area: \(scrollArea)")
+      }
+    }
+
+    // Apply visibility filters using context state
+    if isElementVisible(
+      frame: frame,
+      screenBounds: allScreenBounds,
+      windowFrame: windowFrame,
+      title: finalTitle)
+    {
+
+      if isButton || isTab {
+        debugLog("Adding \(isTab ? "tab" : "button") '\(finalTitle)' to clickable elements")
+      }
+
+      let clickable = ClickableElement(
+        axElement: element,
+        frame: frame,
+        title: finalTitle,
+        role: role ?? "Unknown",
+        isEnabled: attributes.enabled ?? true
+      )
+      clickableElements.append(clickable)
+    } else if isButton || isTab {
+      debugLog("\(isTab ? "Tab" : "Button") '\(finalTitle)' filtered out by visibility check")
     }
 
     // Recursively process all children
@@ -225,7 +343,6 @@ class AXHelpers {
       of: element,
       allScreenBounds: allScreenBounds,
       windowFrame: windowFrame,
-      containerFrame: currentContainerFrame,
       roleStats: &roleStats,
       elementCount: &elementCount,
       clickableElements: &clickableElements,
@@ -236,7 +353,7 @@ class AXHelpers {
   // MARK: - Helper Methods
 
   /// Checks if an element is a tab button (should be included in clickable elements)
-  private static func isTabButton(element: AXUIElement) -> Bool {
+  private func isTabButton(element: AXUIElement) -> Bool {
     // Check subrole attribute for AXTabButton
     if let subrole = element.get(Ax.subroleAttr), subrole == "AXTabButton" {
       return true
@@ -256,7 +373,7 @@ class AXHelpers {
 
   /// Checks if an element is a window control button (close, minimize, full screen)
   /// These buttons should be excluded from clickable element selection
-  private static func isWindowControlButton(element: AXUIElement) -> Bool {
+  private func isWindowControlButton(element: AXUIElement) -> Bool {
     // Check subrole attribute (most reliable indicator)
     if let subrole = element.get(Ax.subroleAttr) {
       let windowControlSubroles = [
@@ -304,7 +421,7 @@ class AXHelpers {
 
   /// Lightweight struct for batch-fetched accessibility attributes
   /// Value type with zero runtime overhead compared to tuples
-  private struct BatchAttributes {
+  struct BatchAttributes {
     let position: CGPoint?
     let size: CGSize?
     let enabled: Bool?
@@ -321,7 +438,7 @@ class AXHelpers {
 
   /// Batch fetches common attributes (position, size, enabled, title) in a single API call
   /// Returns a BatchAttributes struct (value type with zero runtime overhead)
-  private static func getBatchAttributes(element: AXUIElement) -> BatchAttributes {
+  private func getBatchAttributes(element: AXUIElement) -> BatchAttributes {
     // Define attributes to fetch in batch
     let attributes: [CFString] = [
       kAXPositionAttribute as CFString,
@@ -385,61 +502,13 @@ class AXHelpers {
     return BatchAttributes(position: position, size: size, enabled: enabled, title: title)
   }
 
-  /// Updates the container frame when encountering scroll areas
-  ///
-  /// Solution 2 (current): Use container's position+size as visible viewport
-  /// - Assumes position+size represents the visible viewport bounds
-  /// - Filters elements that intersect with this viewport
-  ///
-  /// Alternative Solution 1: Get scroll offsets and calculate visible viewport
-  /// - Could fetch kAXHorizontalScrollBar/kAXVerticalScrollBar attributes
-  /// - Or track scroll position changes over time
-  /// - Calculate visible bounds = container position + scroll offset to container position + size
-  private static func updateContainerFrame(
-    existingContainer: CGRect?,
-    element: AXUIElement,
-    role: String?,
-    position: CGPoint?,
-    size: CGSize?
-  ) -> CGRect? {
-    guard let position = position,
-      let size = size,
-      let role = role,
-      role == "AXScrollArea" || role == "AXWebArea"
-    else {
-      return existingContainer
-    }
-
-    // For scroll containers, position + size should represent the VISIBLE viewport
-    // However, if coordinates are document-relative (negative), we need to calculate
-    // the visible viewport differently. Try to get scroll position if available.
-
-    // Try to get scroll position (Solution 1 approach - not fully implemented)
-    // Some browsers expose scroll position via scroll bar elements or other attributes
-    // For now, we'll use position+size as visible viewport (Solution 2)
-
-    let visibleViewport = CGRect(
-      x: position.x, y: position.y, width: size.width, height: size.height)
-    debugLog("Found \(role) container - visible viewport: \(visibleViewport)")
-
-    // If we already have a parent container, intersect to get visible area
-    // This handles nested scroll areas correctly
-    if let existingContainer = existingContainer {
-      let intersection = existingContainer.intersection(visibleViewport)
-      debugLog("Intersected with existing container: \(intersection)")
-      return intersection
-    }
-
-    return visibleViewport
-  }
-
   /// Checks if element size is valid (positive width and height)
-  private static func isValidElementSize(_ size: CGSize) -> Bool {
+  private func isValidElementSize(_ size: CGSize) -> Bool {
     return size.width > 0 && size.height > 0
   }
 
   /// Gets display title for an element, with fallback to "Link" if none found
-  private static func getDisplayTitle(for element: AXUIElement) -> String {
+  private func getDisplayTitle(for element: AXUIElement) -> String {
     let title =
       element.get(Ax.titleAttr)
       ?? getElementDescription(element)
@@ -448,66 +517,72 @@ class AXHelpers {
     return trimmedTitle.isEmpty ? "Link" : trimmedTitle
   }
 
-  /// Checks if element is visible based on screen bounds and scroll container viewports
+  /// Checks if element is visible based on context state
   ///
-  /// For web elements, coordinates are relative to the document content area, not screen.
-  /// We check if elements intersect with:
-  /// 1. Screen bounds (for native elements)
-  /// 2. Scroll container's visible viewport (for web elements)
+  /// Uses context tracking to filter elements:
+  /// 1. Screen bounds check (multi-monitor aware)
+  /// 2. Scroll container visibility (50% threshold)
+  /// 3. Chrome area exclusion (via currentIsInChrome flag)
   ///
   /// - Parameters:
-  ///   - frame: Element's frame (may be in screen or document coordinates)
+  ///   - frame: Element's frame in screen coordinates
   ///   - screenBounds: Array of all screen bounds
-  ///   - windowFrame: Window frame in screen coordinates (for web content visibility)
-  ///   - containerFrame: Optional container visible viewport bounds (for web areas)
+  ///   - windowFrame: Window frame in screen coordinates
   ///   - title: Element title (for debug logging)
   /// - Returns: true if element should be displayed
-  private static func isElementVisible(
+  private func isElementVisible(
     frame: CGRect,
     screenBounds: [CGRect],
     windowFrame: CGRect?,
-    containerFrame: CGRect?,
     title: String
   ) -> Bool {
     // First check: Is element on screen (for elements with screen coordinates)
     let isOnScreen = screenBounds.contains { $0.intersects(frame) }
 
+    // Second check: For elements in scroll containers, require 50% visibility
+    if let scrollArea = currentScrollArea {
+      let intersection = scrollArea.intersection(frame)
+
+      // Calculate visible percentage
+      let elementArea = frame.width * frame.height
+      guard elementArea > 0 else {
+        debugLog("Filtering out '\(title)' - zero area element")
+        return false
+      }
+
+      let visibleArea = intersection.width * intersection.height
+      let visibilityPercentage = visibleArea / elementArea
+
+      let isVisible = visibilityPercentage >= 0.5
+
+      if isVisible {
+        debugLog(
+          "Including '\(title)' - element at \(frame) is \(Int(visibilityPercentage * 100))% visible in scroll area \(scrollArea)"
+        )
+      } else {
+        debugLog(
+          "Filtering out '\(title)' - element at \(frame) is only \(Int(visibilityPercentage * 100))% visible (< 50%) in scroll area \(scrollArea)"
+        )
+      }
+
+      return isVisible
+    }
+
+    // No scroll container - use screen bounds check
     if isOnScreen {
       debugLog("Including '\(title)' - element at \(frame) is on screen")
       return true
     }
 
-    // Second check: For web elements, check if they intersect with the visible viewport
-    if let containerViewport = containerFrame {
-      // Element is inside a web/scroll container
-      // The containerFrame represents the visible viewport of the scroll container
-      // Check if the element intersects with this visible viewport
-      let intersectsViewport = containerViewport.intersects(frame)
-
-      if intersectsViewport {
-        debugLog(
-          "Including '\(title)' - web element at \(frame) intersects visible viewport \(containerViewport)"
-        )
-        return true
-      } else {
-        debugLog(
-          "Filtering out '\(title)' - web element at \(frame) outside visible viewport \(containerViewport)"
-        )
-        return false
-      }
-    }
-
-    // No container and not on screen = not visible
     debugLog("Filtering out '\(title)' - off screen at \(frame)")
     return false
   }
 
   /// Processes all children of an element recursively
-  private static func processChildren(
+  private func processChildren(
     of element: AXUIElement,
     allScreenBounds: [CGRect],
     windowFrame: CGRect?,
-    containerFrame: CGRect?,
     roleStats: inout [String: Int],
     elementCount: inout Int,
     clickableElements: inout [ClickableElement],
@@ -523,11 +598,10 @@ class AXHelpers {
     }
 
     for child in childElements {
-      collectElementsRecursively(
-        from: child,
+      traverseElement(
+        child,
         allScreenBounds: allScreenBounds,
         windowFrame: windowFrame,
-        containerFrame: containerFrame,
         roleStats: &roleStats,
         elementCount: &elementCount,
         clickableElements: &clickableElements,
@@ -539,7 +613,7 @@ class AXHelpers {
   /// Attempts to get a description for an element by checking various attributes
   /// Tries in order: description, value, role description, URL
   /// Uses batch attribute retrieval for better performance
-  private static func getElementDescription(_ element: AXUIElement) -> String? {
+  private func getElementDescription(_ element: AXUIElement) -> String? {
     // Define attributes to fetch in priority order (as CFString)
     let attributes: [CFString] = [
       kAXDescriptionAttribute as CFString,
@@ -596,6 +670,31 @@ class AXHelpers {
     }
 
     return nil
+  }
+
+  
+  // MARK: - Static Methods
+  
+  /// Collects all visible clickable elements from the frontmost application window
+  static func collectClickableElements() -> [ClickableElement] {
+    guard let frontmostApp = NSWorkspace.shared.frontmostApplication else {
+      debugLog("No frontmost app")
+      return []
+    }
+
+    let axApp = AXUIElementCreateApplication(frontmostApp.processIdentifier)
+
+    // Enhanced UI mode may help expose more web content in some browsers
+    axApp.set(Ax.enhancedUserInterfaceAttr, true)
+
+    guard let focusedWindow = axApp.get(Ax.focusedWindowAttr) else {
+      debugLog("No focused window")
+      return []
+    }
+
+    // Create interface instance and collect elements
+    let interface = AXInterface(root: focusedWindow)
+    return interface.collectClickableElements()
   }
 
   /// Performs a click action on the given element

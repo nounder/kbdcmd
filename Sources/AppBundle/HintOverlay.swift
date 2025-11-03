@@ -22,7 +22,7 @@ class AccessibilityOverlayWindow: NSWindow {
 // MARK: - Hint Overlay Manager
 
 /// Manages the UI overlay window and views for displaying clickable element hints
-/// Coordinates between AXHelpers, keyboard input, and UI display
+/// Coordinates between AXInterface, keyboard input, and UI display
 class HintOverlay {
   static let shared = HintOverlay()
 
@@ -58,7 +58,7 @@ class HintOverlay {
       guard let self = self else { return }
 
       // Collect elements on background thread
-      let elements = AXHelpers.collectClickableElements()
+      let elements = AXInterface.collectClickableElements()
 
       // Update UI on main thread with proper state management
       DispatchQueue.main.async {
@@ -195,7 +195,7 @@ class HintOverlay {
 
   /// Performs a click action on the given element
   private func clickElement(_ element: ClickableElement) {
-    let success = AXHelpers.clickElement(element)
+    let success = AXInterface.clickElement(element)
 
     if success {
       // Hide overlay after successful click with brief delay for visual feedback
