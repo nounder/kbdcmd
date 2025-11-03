@@ -324,8 +324,12 @@ func registerDefaultKeybindings() {
     cmdOpenCycle("/Applications/Spotify.app")
   }
 
-  kb.register([KeyPress(key: .character("C"), flags: .maskCmdRight)]) { _ in
+  kb.register([KeyPress(key: .character("U"), flags: .maskCmdRight)]) { _ in
     cmdOpenCycle("/System/Applications/Calendar.app")
+  }
+
+  kb.register([KeyPress(key: .character("C"), flags: .maskCmdRight)]) { _ in
+    cmdOpenCycle("/Applications/Warp.app")
   }
 
   kb.register([KeyPress(key: .character("G"), flags: .maskCmdRight)]) { _ in
