@@ -15,6 +15,7 @@ struct Kbdcmd: ParsableCommand {
       SwitchDesktopCommand.self,
       MarkWindowCommand.self,
       FocusMarkCommand.self,
+      SnapshotCommand.self,
     ]
   )
 }
