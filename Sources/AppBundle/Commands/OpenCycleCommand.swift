@@ -6,12 +6,14 @@ struct OpenCycleCommand: ParsableCommand {
     abstract: "Open or focus an application, then cycle through its windows"
   )
 
-  @Argument(help: "Path to the application (e.g., /Applications/Safari.app)")
+  @Argument(help: "Application name or path (e.g., Safari or /Applications/Safari.app)")
   var appPath: String
 
   func run() throws {
     try Permissions.checkAccessibility()
-    let result = try ApplicationManager.openOrFocus(appPath)
+    // Try to resolve app name first, fall back to provided path
+    let resolvedPath = ApplicationManager.resolve(appPath) ?? appPath
+    let result = try ApplicationManager.openOrFocus(resolvedPath)
 
     if result == .opened {
       WindowManager.main.cycleAppWindows()

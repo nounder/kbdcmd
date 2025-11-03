@@ -6,11 +6,13 @@ struct OpenCommand: ParsableCommand {
     abstract: "Open or focus an application"
   )
 
-  @Argument(help: "Path to the application (e.g., /Applications/Safari.app)")
+  @Argument(help: "Application name or path (e.g., Safari or /Applications/Safari.app)")
   var appPath: String
 
   func run() throws {
     try Permissions.checkAccessibility()
-    _ = try ApplicationManager.openOrFocus(appPath)
+    // Try to resolve app name first, fall back to provided path
+    let resolvedPath = ApplicationManager.resolve(appPath) ?? appPath
+    _ = try ApplicationManager.openOrFocus(resolvedPath)
   }
 }

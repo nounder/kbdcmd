@@ -9,6 +9,39 @@ enum ApplicationOpenResult {
 }
 
 struct ApplicationManager {
+  static func resolve(_ appName: String) -> String? {
+    let fileManager = FileManager.default
+
+    let normalizedName = appName.hasSuffix(".app") ? appName : "\(appName).app"
+
+    let searchPaths = [
+      "/Applications",
+      fileManager.homeDirectoryForCurrentUser.appendingPathComponent("Applications").path,
+    ]
+
+    for searchPath in searchPaths {
+      let appPath = (searchPath as NSString).appendingPathComponent(normalizedName)
+
+      guard fileManager.fileExists(atPath: appPath) else {
+        continue
+      }
+      let appURL = URL(fileURLWithPath: appPath)
+
+      // Check if it's a valid bundle and has an executable
+      guard let bundle = Bundle(url: appURL),
+        bundle.bundleIdentifier != nil,
+        let executablePath = bundle.executablePath,
+        fileManager.isExecutableFile(atPath: executablePath)
+      else {
+        continue
+      }
+
+      return appPath
+    }
+
+    return nil
+  }
+
   static func openOrFocus(_ appPath: String, ignoreMinimized: Bool = true) throws
     -> ApplicationOpenResult
   {
@@ -50,10 +83,8 @@ struct ApplicationManager {
           let hasNonMinimizedWindow = axWindows.contains { $0.get(Ax.minimizedAttr) != true }
 
           if !hasNonMinimizedWindow {
-            // Activate the app first to ensure any new window will be frontmost
             runningApp.activate(options: .activateIgnoringOtherApps)
 
-            // First try to create a new window via menu (if File > New Window exists)
             if WindowManager.main.createNewWindowViaMenu(for: axApp) {
               return .opened
             }
