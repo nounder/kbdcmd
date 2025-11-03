@@ -1,11 +1,16 @@
 import ApplicationServices
 import Cocoa
 import CoreGraphics
+import Foundation
 
 struct Window {
   var number: CGWindowID
   var pid: pid_t
   var app: NSRunningApplication
+}
+
+enum DesktopError: Error {
+  case invalidDesktopNumber
 }
 
 class WindowManager {
@@ -54,4 +59,126 @@ class WindowManager {
     return windows
   }
 
+  func cycleAppWindows() {
+    guard let frontmostApp = getFrontmostApplication() else {
+      print("Cannot get frontmost application")
+      return
+    }
+
+    let axApp = AXUIElementCreateApplication(frontmostApp.processIdentifier)
+
+    var axValue: AnyObject?
+    let result = AXUIElementCopyAttributeValue(
+      axApp, kAXWindowsAttribute as CFString, &axValue)
+
+    guard result == .success else {
+      print("Could not get Accessability windows")
+      return
+    }
+
+    let axWindows = axValue as? [AXUIElement]
+
+    guard let axWindows = axWindows else {
+      print("Could not get Accessability windows")
+      return
+    }
+
+    let nonMinimizedWindows = axWindows.filter {
+      $0.get(Ax.minimizedAttr) != true
+    }
+
+    if nonMinimizedWindows.count <= 1 {
+      return
+    }
+
+    // Raise the last window to properly cycle through all windows
+    // When raised, it becomes the frontmost, creating a rotation effect
+    _ = nonMinimizedWindows.last!.raise()
+  }
+
+  func createNewWindowViaMenu(for app: AXUIElement) -> Bool {
+    // Get menu bar element
+    var menuBar: AnyObject?
+    guard AXUIElementCopyAttributeValue(app, kAXMenuBarAttribute as CFString, &menuBar) == .success,
+      CFGetTypeID(menuBar) == AXUIElementGetTypeID()
+    else {
+      debugLog("Could not get menu bar")
+      return false
+    }
+
+    let menuBarElement = menuBar as! AXUIElement
+
+    // Get localized "File" menu name from system
+    let localizedFileMenu = getLocalizedString(key: "File", tableName: "MenuCommands")
+    let localizedNewWindow = getLocalizedString(key: "New Window", tableName: "MenuCommands")
+
+    debugLog("Looking for File menu: '\(localizedFileMenu)', New Window: '\(localizedNewWindow)'")
+
+    // First, find the File menu
+    let tree = AXTree(root: menuBarElement)
+    var fileMenu: AXUIElement?
+
+    tree.traverse { element, depth in
+      guard depth <= 1 else { return .skipChildren }
+
+      let values = element.getAttributes(kAXTitleAttribute)
+      if let title = values[0] as? String, title == localizedFileMenu {
+        fileMenu = element
+        return .stop
+      }
+
+      return nil
+    }
+
+    guard let fileMenu = fileMenu else {
+      debugLog("Could not find File menu")
+      return false
+    }
+
+    // Now traverse only within the File menu to find New Window
+    let fileTree = AXTree(root: fileMenu)
+    var foundItem: AXUIElement?
+
+    fileTree.traverse { element, depth in
+      // Search by exact "New Window" title to avoid conflicts with other shortcuts
+      // (e.g., Mail.app uses Cmd+N for "New Message" instead of "New Window")
+      let values = element.getAttributes(kAXTitleAttribute)
+      if let itemTitle = values[0] as? String, itemTitle == localizedNewWindow {
+        foundItem = element
+        return .stop
+      }
+
+      return nil
+    }
+
+    if let item = foundItem {
+      return AXUIElementPerformAction(item, kAXPressAction as CFString) == .success
+    }
+
+    return false
+  }
+
+  func switchToDesktop(number: Int) throws {
+    guard (1...9).contains(number) else {
+      throw DesktopError.invalidDesktopNumber
+    }
+
+    // Simulate pressing the number key for the desired desktop
+    let desktopKeyCode = CGKeyCode(0x12 + (number - 1))  // 0x12 is '1' key
+    Keyboard.simulateKeyPress(keyCode: desktopKeyCode, flags: .maskControl)
+
+    print("Switched to desktop \(number)")
+  }
+
+  private func getLocalizedString(key: String, tableName: String) -> String {
+    // Try to get system localized string
+    // This searches in /System/Library/Frameworks/AppKit.framework/Resources/
+    if let bundle = Bundle(identifier: "com.apple.AppKit") {
+      let localized = bundle.localizedString(forKey: key, value: nil, table: tableName)
+      if localized != key {
+        return localized
+      }
+    }
+    return key
+  }
 }

@@ -12,7 +12,7 @@ final class Snippets {
   private static func deleteCharacters(count: Int) {
     guard count > 0 else { return }
     for _ in 0..<count {
-      simulateKeyPress(keyCode: backspaceKeyCode, flags: [])
+      Keyboard.simulateKeyPress(keyCode: backspaceKeyCode, flags: [])
     }
   }
 
@@ -37,7 +37,7 @@ final class Snippets {
     deleteCharacters(count: toDelete)
     for ch in text {
       if let keyCode = KeyListener.stringToKeyCode(char: String(ch)) {
-        simulateKeyPress(keyCode: keyCode, flags: [])
+        Keyboard.simulateKeyPress(keyCode: keyCode, flags: [])
       }
     }
   }

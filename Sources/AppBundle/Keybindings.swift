@@ -82,6 +82,7 @@ private struct KeyInSequence: Hashable {
 private class SequenceNode {
   var action: (([KeyPress]) -> Void)?
   var sequence: [KeyPress]?
+  var consume: Bool = false  // By default, don't consume the event (let it pass through)
   var children: [KeyInSequence: SequenceNode] = [:]
 }
 
@@ -106,7 +107,9 @@ class Keybindings {
 
   // MARK: - Registration
 
-  func register<S: Sequence>(_ sequence: S, action: @escaping ([KeyPress]) -> Void)
+  func register<S: Sequence>(
+    _ sequence: S, consume: Bool = true, action: @escaping ([KeyPress]) -> Void
+  )
   where S.Element == KeyPress {
 
     let seq = Array(sequence)
@@ -138,13 +141,14 @@ class Keybindings {
       }
       node.sequence = expanded
       node.action = action
+      node.consume = consume
     }
   }
 
   // MARK: - Lookup
 
   enum SequenceMatch {
-    case complete(action: ([KeyPress]) -> Void, sequence: [KeyPress])
+    case complete(action: ([KeyPress]) -> Void, sequence: [KeyPress], consume: Bool)
     case partial
     case noMatch
   }
@@ -156,7 +160,8 @@ class Keybindings {
     guard !bufferArray.isEmpty else { return .noMatch }
 
     // Find all matching paths where registered modifiers are subset of pressed modifiers
-    var candidates: [(action: ([KeyPress]) -> Void, sequence: [KeyPress], flags: UInt64)] = []
+    var candidates:
+      [(action: ([KeyPress]) -> Void, sequence: [KeyPress], flags: UInt64, consume: Bool)] = []
     var hasPartialMatch = false
 
     findMatches(
@@ -172,7 +177,8 @@ class Keybindings {
       let bestMatch = candidates.max { a, b in
         isMoreSpecific(b.flags, than: a.flags)
       }!
-      return .complete(action: bestMatch.action, sequence: bestMatch.sequence)
+      return .complete(
+        action: bestMatch.action, sequence: bestMatch.sequence, consume: bestMatch.consume)
     }
 
     return hasPartialMatch ? .partial : .noMatch
@@ -182,7 +188,9 @@ class Keybindings {
     at node: SequenceNode,
     buffer: [KeyPress],
     index: Int,
-    candidates: inout [(action: ([KeyPress]) -> Void, sequence: [KeyPress], flags: UInt64)],
+    candidates: inout [(
+      action: ([KeyPress]) -> Void, sequence: [KeyPress], flags: UInt64, consume: Bool
+    )],
     hasPartialMatch: inout Bool
   ) {
     // Base case: we've matched all keys in the buffer
@@ -190,7 +198,7 @@ class Keybindings {
       if let action = node.action, let sequence = node.sequence {
         // Extract flags from first key press (only first key can have modifiers)
         let flags = sequence.first?.flags.rawValue ?? 0
-        candidates.append((action: action, sequence: sequence, flags: flags))
+        candidates.append((action: action, sequence: sequence, flags: flags, consume: node.consume))
       }
       if !node.children.isEmpty {
         hasPartialMatch = true

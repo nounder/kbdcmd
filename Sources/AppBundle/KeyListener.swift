@@ -272,10 +272,12 @@ class KeyListener {
     let result = Keybindings.shared.matchSequence(sequenceBuffer)
 
     switch result {
-    case .complete(let action, let sequence):
+    case .complete(let action, let sequence, let consume):
       sequenceBuffer.removeAll()
       action(sequence)
-      return true
+      // Return consume flag: if consume=true, prevent event from reaching app
+      // if consume=false, let the event pass through to the app
+      return consume
 
     case .partial:
       // Waiting for more keys in sequence, don't consume event
