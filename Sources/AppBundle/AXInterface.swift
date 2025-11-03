@@ -244,6 +244,8 @@ class AXInterface {
     let isButton = role == "AXButton"
     let isRadioButton = role == "AXRadioButton"
     let isTab = isTabButton(element: element)
+    let isTextField = role == "AXTextField"
+    let isCheckBox = role == "AXCheckBox"
 
     // Debug logging for button detection
     if isButton {
@@ -252,9 +254,15 @@ class AXInterface {
     if isTab {
       debugLog("Found tab button with role: \(role ?? "nil")")
     }
+    if isTextField {
+      debugLog("Found text field element with role: \(role ?? "nil")")
+    }
+    if isCheckBox {
+      debugLog("Found checkbox element with role: \(role ?? "nil")")
+    }
 
     // Only process clickable elements
-    guard isLink || isButton || isRadioButton || isTab else {
+    guard isLink || isButton || isRadioButton || isTab || isTextField || isCheckBox else {
       // Skip non-clickable elements but traverse their children
       processChildren(
         of: element,
@@ -275,8 +283,22 @@ class AXInterface {
     else {
       let positionStr = attributes.position.map { "\($0)" } ?? "nil"
       let sizeStr = attributes.size.map { "\($0)" } ?? "nil"
+      let elementType: String
+      if isTab {
+        elementType = "Tab"
+      } else if isButton {
+        elementType = "Button"
+      } else if isTextField {
+        elementType = "TextField"
+      } else if isCheckBox {
+        elementType = "CheckBox"
+      } else if isLink {
+        elementType = "Link"
+      } else {
+        elementType = "RadioButton"
+      }
       debugLog(
-        "\(isTab ? "Tab" : (isButton ? "Button" : "Link")) filtered out - missing position/size or invalid size. position: \(positionStr), size: \(sizeStr)"
+        "\(elementType) filtered out - missing position/size or invalid size. position: \(positionStr), size: \(sizeStr)"
       )
       processChildren(
         of: element,
@@ -299,15 +321,38 @@ class AXInterface {
     }
 
     let frame = CGRect(x: position.x, y: position.y, width: size.width, height: size.height)
-    let defaultTitle = isLink ? "Link" : (isTab ? "Tab" : "Button")
+    let defaultTitle: String
+    if isLink {
+      defaultTitle = "Link"
+    } else if isTab {
+      defaultTitle = "Tab"
+    } else if isTextField {
+      defaultTitle = "TextField"
+    } else if isCheckBox {
+      defaultTitle = "CheckBox"
+    } else if isRadioButton {
+      defaultTitle = "RadioButton"
+    } else {
+      defaultTitle = "Button"
+    }
     let displayTitle = attributes.title ?? getElementDescription(element) ?? defaultTitle
     let trimmedTitle = displayTitle.trimmingCharacters(in: .whitespacesAndNewlines)
     let finalTitle = trimmedTitle.isEmpty ? defaultTitle : trimmedTitle
 
-    // Debug logging for buttons and tabs
-    if isButton || isTab {
+    // Debug logging for buttons, tabs, text fields, and checkboxes
+    if isButton || isTab || isTextField || isCheckBox {
+      let elementType: String
+      if isTab {
+        elementType = "tab"
+      } else if isTextField {
+        elementType = "text field"
+      } else if isCheckBox {
+        elementType = "checkbox"
+      } else {
+        elementType = "button"
+      }
       debugLog(
-        "Processing \(isTab ? "tab" : "button") '\(finalTitle)' at frame: \(frame), enabled: \(attributes.enabled ?? true)"
+        "Processing \(elementType) '\(finalTitle)' at frame: \(frame), enabled: \(attributes.enabled ?? true)"
       )
       if let scrollArea = currentScrollArea {
         debugLog("Current scroll area: \(scrollArea)")
@@ -322,8 +367,18 @@ class AXInterface {
       title: finalTitle)
     {
 
-      if isButton || isTab {
-        debugLog("Adding \(isTab ? "tab" : "button") '\(finalTitle)' to clickable elements")
+      if isButton || isTab || isTextField || isCheckBox {
+        let elementType: String
+        if isTab {
+          elementType = "tab"
+        } else if isTextField {
+          elementType = "text field"
+        } else if isCheckBox {
+          elementType = "checkbox"
+        } else {
+          elementType = "button"
+        }
+        debugLog("Adding \(elementType) '\(finalTitle)' to clickable elements")
       }
 
       let clickable = ClickableElement(
@@ -334,8 +389,18 @@ class AXInterface {
         isEnabled: attributes.enabled ?? true
       )
       clickableElements.append(clickable)
-    } else if isButton || isTab {
-      debugLog("\(isTab ? "Tab" : "Button") '\(finalTitle)' filtered out by visibility check")
+    } else if isButton || isTab || isTextField || isCheckBox {
+      let elementType: String
+      if isTab {
+        elementType = "Tab"
+      } else if isTextField {
+        elementType = "TextField"
+      } else if isCheckBox {
+        elementType = "CheckBox"
+      } else {
+        elementType = "Button"
+      }
+      debugLog("\(elementType) '\(finalTitle)' filtered out by visibility check")
     }
 
     // Recursively process all children
@@ -672,9 +737,8 @@ class AXInterface {
     return nil
   }
 
-  
   // MARK: - Static Methods
-  
+
   /// Collects all visible clickable elements from the frontmost application window
   static func collectClickableElements() -> [ClickableElement] {
     guard let frontmostApp = NSWorkspace.shared.frontmostApplication else {
