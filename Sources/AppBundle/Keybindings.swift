@@ -34,6 +34,12 @@ enum Key: Hashable {
     case f10 = 109
     case f11 = 103
     case f12 = 111
+    case leftCommand = 55
+    case rightCommand = 54
+    case leftOption = 58
+    case rightOption = 61
+    case leftControl = 59
+    case rightControl = 62
   }
 }
 

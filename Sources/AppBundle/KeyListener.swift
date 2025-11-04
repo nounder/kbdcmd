@@ -1,5 +1,6 @@
 import Carbon
 import Cocoa
+import IOKit.hid
 import InputMethodKit
 
 class KeyListener {
@@ -9,12 +10,75 @@ class KeyListener {
   private var sequenceBuffer: [KeyPress] = []
   private var lastKeyPressTime: Date = Date()
   private var overlayShowTimer: Timer?
+
   /**
-   * when Caps Lock is disabled in (System Settings -> Keyboard),
-   * the system does not set the maskAlphaShift flag on events.
-   * Therefore, we need to track the Caps Lock state manually.
+   * Tracks the physical state of the Caps Lock key via HID events.
+   *
+   * This is ONLY used when Caps Lock is mapped to "No Action" in System Settings.
+   * When Caps Lock is mapped to another modifier (Control, Option, etc.), we rely on
+   * CG event flags instead since the system provides them correctly.
+   *
+   * - nil: Caps Lock is NOT mapped to "No Action" - use CG event flags
+   * - false: Caps Lock is mapped to "No Action" and key is released (or startup state)
+   * - true: Caps Lock is mapped to "No Action" and key is pressed
+   *
+   * Race Handling:
+   * HID events may arrive on a background queue and can precede or lag behind CG events.
+   * We maintain this state from HID callbacks and check it when processing keyDown events,
+   * but only inject .maskAlphaShift when capsLockRemapping is detected as "No Action".
+   *
+   * Device Handling:
+   * This state is reset to nil when any keyboard device connects or disconnects to force re-detection.
    */
-  private var isCapsLockPressed: Bool = false
+  private var isPhysicalCapsLockPressed: Bool? = false
+
+  /**
+   * Tracks what Caps Lock is remapped to in System Settings.
+   *
+   * Detected by observing flagsChanged events when Caps Lock key (keyCode 57/62) is pressed.
+   *
+   * When Caps Lock is remapped to act as another modifier, macOS sets an additional flag 0x100 (256)
+   * in the event flags to distinguish it from the real modifier key. This is the "Caps Lock as modifier" marker.
+   *
+   * Flag patterns when Caps Lock is held (remapped):
+   * - caps-as-option:  0x80100 (524608) vs option:  0x80080 (524576) - difference includes 0x100
+   * - caps-as-control: 0x42100 (270592) vs control: 0x40101 (262401) - difference includes 0x100
+   * - caps-as-command: 0x100110 (1048848) vs command: 0x100108 (1048840) - difference includes 0x100
+   * - caps-as-globe:   0x800100 (8388864) same as globe (no way to distinguish)
+   *
+   * Detection strategy:
+   * 1. Check if flag delta includes 0x100 - indicates Caps Lock remapped as modifier
+   * 2. Check which standard modifier flag is also present to determine the target
+   * 3. If only maskAlphaShift changed - standard Caps Lock
+   * 4. If no flags changed - "No Action" (use HID tracking)
+   *
+   * Reset to nil on keyboard device changes to force re-detection.
+   */
+  private var capsLockRemapping: KeyboardModifierAction? = nil
+  private var previousCGEventFlags: CGEventFlags.RawValue = 0
+
+  /**
+  * As seen in System Settings -> Keyboard -> Modifier Keys
+  */
+  private enum KeyboardModifierAction {
+    case capsLock  // Caps Lock (maskAlphaShift)
+    case control  // Control
+    case option  // Option
+    case shift  // Shift
+    case command  // Command
+    case globe  // Globe/Fn
+    case noAction  // No Action - use HID tracking
+  }
+
+  // flag when Caps Lock is used as a remapped modifier (not the actual modifier key)
+  private static let kCapsLockAsModifierFlag: UInt64 = 0x100
+
+  private let hidMonitor = KeyboardHIDMonitor(
+    monitorKeys: true,
+    monitorDevices: true
+  )
+  private var hidKeyHandle: KeyboardHIDMonitor.CallbackHandle?
+  private var hidDeviceHandle: KeyboardHIDMonitor.CallbackHandle?
 
   // keycodes are in the range 0-127
   // >3x faster than dictionary lookup
@@ -30,7 +94,7 @@ class KeyListener {
       }
     }
 
-    // Then, scan for character keys (skip already-mapped special keys)
+    // scan for character keys (skip already-mapped special keys)
     let inputSource = TISCopyCurrentKeyboardInputSource().takeRetainedValue()
     guard let layoutData = TISGetInputSourceProperty(inputSource, kTISPropertyUnicodeKeyLayoutData)
     else {
@@ -79,7 +143,10 @@ class KeyListener {
     keyCodeToKey = buildKeyCodeCache()
     debugLog("Initial key code cache built")
 
-    // Register for keyboard input source change notifications
+    setupListeners()
+  }
+
+  private func setupListeners() {
     DistributedNotificationCenter.default().addObserver(
       self,
       selector: #selector(keyboardInputSourceChanged),
@@ -87,6 +154,63 @@ class KeyListener {
       object: nil
     )
     debugLog("Registered for keyboard input source change notifications")
+
+    // Set up HID monitor for Caps Lock key events
+    hidKeyHandle = hidMonitor.onKeyEvent { [weak self] event in
+      guard let self = self else { return }
+      guard case let .key(page, usage, pressed) = event.kind,
+        page == UInt32(kHIDPage_KeyboardOrKeypad),
+        usage == UInt32(kHIDUsage_KeyboardCapsLock)
+      else { return }
+
+      // Always track physical state - we may not know the remapping yet
+      if self.isPhysicalCapsLockPressed != pressed {
+        self.isPhysicalCapsLockPressed = pressed
+        debugLog("Physical CapsLock state = \(pressed) from device: \(event.device.product)")
+
+        // If we're pressing Caps Lock but remapping is unknown, try to detect it
+        if pressed && self.capsLockRemapping == nil {
+          // Wait a brief moment for CG events, then check if we got flags
+          DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
+            guard let self = self else { return }
+            // If still no remapping detected, it's "No Action"
+            if self.capsLockRemapping == nil {
+              self.capsLockRemapping = .noAction
+              debugLog("Caps Lock remapping detected: No Action (no CG flags observed)")
+            }
+          }
+        }
+      }
+    }
+
+    // Register for device change events to reset Caps Lock state
+    hidDeviceHandle = hidMonitor.onDeviceChange { [weak self] event in
+      guard let self = self else { return }
+      switch event.kind {
+      case .deviceConnected(let device):
+        self.isPhysicalCapsLockPressed = nil
+        self.capsLockRemapping = nil
+        debugLog(
+          "Keyboard connected (\(device.product)), resetting physical CapsLock state and remapping detection"
+        )
+      case .deviceDisconnected(let device):
+        self.isPhysicalCapsLockPressed = nil
+        self.capsLockRemapping = nil
+        debugLog(
+          "Keyboard disconnected (\(device.product)), resetting physical CapsLock state and remapping detection"
+        )
+      default:
+        break
+      }
+    }
+
+    // Start HID monitoring
+    do {
+      try hidMonitor.start()
+      debugLog("HID monitor started successfully")
+    } catch {
+      debugLog("ERROR: Failed to start HID monitor: \(error)")
+    }
 
     // Listen for keyDown, keyUp, and flagsChanged events (for modifier keys like right command)
     let eventMask =
@@ -119,6 +243,9 @@ class KeyListener {
 
   deinit {
     DistributedNotificationCenter.default().removeObserver(self)
+    hidKeyHandle = nil
+    hidDeviceHandle = nil
+    hidMonitor.stop()
   }
 
   @objc private func keyboardInputSourceChanged(_ notification: Notification) {
@@ -130,64 +257,35 @@ class KeyListener {
   static func handleEvent(proxy: CGEventTapProxy, type: CGEventType, event: CGEvent) -> Bool {
     let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
 
-    // Debug: Print all events to see what we're receiving
-    // Output goes to /tmp/kbcmd.stdout.log when running as daemon
     if type == .keyDown || type == .keyUp || type == .flagsChanged {
-      // Log all flagsChanged events to see what we're getting
       if type == .flagsChanged {
         debugLog(
           "flagsChanged event - keyCode=\(keyCode), flags=\(event.flags.rawValue), maskAlphaShift=\(event.flags.contains(.maskAlphaShift))"
         )
       }
-      // Only log CapsLock-related events and J/K to reduce noise
-      // CapsLock can be keyCode 57 (standard) or 62 (when disabled)
-      if keyCode == 57 || keyCode == 62 || keyCode == 38 || keyCode == 40 {
-        debugLog(
-          "Event type=\(type.rawValue), keyCode=\(keyCode), flags=\(event.flags.rawValue)")
-      }
+      debugLog(
+        "Event type=\(type.rawValue), keyCode=\(keyCode), flags=\(event.flags.rawValue)")
     }
 
-    // rcmd is pressed
     if type == .flagsChanged {
-
-      // Right Command key code is 54
-      if keyCode == 54 {
+      if keyCode == Key.Named.rightCommand.rawValue {
         if event.flags.contains(.maskCmdRight) {
           // Right Command pressed - start timer to show overlay after 400ms
-          KeyListener.shared.scheduleOverlayShow()
+          Self.shared.scheduleOverlayShow()
         } else {
           // Right Command released - cancel timer and hide overlay
-          KeyListener.shared.cancelOverlayShow()
+          Self.shared.cancelOverlayShow()
           WindowSwitcherOverlay.shared.hide()
         }
       }
 
-      // CapsLock detection - handle both keyCode 57 (standard) and 62 (when disabled)
-      // CapsLock can have different keyCodes depending on keyboard type and system settings
-      if keyCode == 57 || keyCode == 62 {
-        // Determine if this is press or release based on flags value
-        // For keyCode 57: check maskAlphaShift flag (standard CapsLock)
-        // For keyCode 62: check flags value (when disabled, maskAlphaShift won't be set)
-        let isPressed =
-          keyCode == 57 ? event.flags.contains(.maskAlphaShift) : event.flags.rawValue > 256
-        KeyListener.shared.isCapsLockPressed = isPressed
-        debugLog(
-          "CapsLock flagsChanged (keyCode=\(keyCode)), flags=\(event.flags.rawValue), setting isCapsLockPressed=\(isPressed)"
-        )
-      }
-
+      handleCapsLockDetection(currentFlags: event.flags.rawValue)
       return false
     }
 
     // Handle keyUp events
     if type == .keyUp {
-      // Check if CapsLock key is released (keyCode 57 or 62 depending on keyboard/system)
-      if keyCode == 57 || keyCode == 62 {
-        KeyListener.shared.isCapsLockPressed = false
-        debugLog(
-          "CapsLock keyUp detected (keyCode=\(keyCode)), setting isCapsLockPressed = false")
-      }
-
+      // No special handling needed - HID events and flagsChanged handle state tracking
       return false
     }
 
@@ -195,11 +293,8 @@ class KeyListener {
     if type == .keyDown {
       let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
 
-      // Check if CapsLock key itself is pressed (keyCode 57 or 62 depending on keyboard/system)
+      // Skip Caps Lock key itself - it's handled via flagsChanged and HID events
       if keyCode == 57 || keyCode == 62 {
-        KeyListener.shared.isCapsLockPressed = true
-        debugLog(
-          "CapsLock keyDown detected (keyCode=\(keyCode)), setting isCapsLockPressed = true")
         return false  // Don't consume the event, let it pass through
       }
 
@@ -211,7 +306,7 @@ class KeyListener {
 
       // If accessibility overlay is visible, handle keyboard events for overlay
       if HintOverlay.shared.isVisible {
-        let char = KeyListener.keyCodeToString(keyCode: Int(keyCode), event: event)
+        let char = Self.keyCodeToString(keyCode: Int(keyCode), event: event)
         if HintOverlay.shared.handleKeyboardEvent(keyCode: keyCode, characters: char) {
           return true  // Event was handled by overlay
         }
@@ -220,26 +315,40 @@ class KeyListener {
 
       // Fast array lookup: keyCode → Key (single operation!)
       guard keyCode >= 0 && keyCode < 128,
-        let key = KeyListener.shared.keyCodeToKey[Int(keyCode)]
+        let key = Self.shared.keyCodeToKey[Int(keyCode)]
       else {
         return false
       }
 
-      // When CapsLock is pressed (tracked manually), create new flags with maskAlphaShift set
-      // This is necessary because when CapsLock is disabled or changed to other modifier in System Settings,
-      // the system doesn't set maskAlphaShift flag automatically
+      // Handle Caps Lock modifier injection when mapped to "No Action"
+      //
+      // When Caps Lock is remapped to "No Action" in System Settings, CG events don't include
+      // any modifier flags. We detect this via capsLockRemapping == .noAction.
+      // In this case, we inject .maskAlphaShift when the physical key is pressed (tracked via HID).
+      //
+      // When Caps Lock is mapped to another modifier (Control, Option, etc.), we rely on CG events
+      // to provide the correct flags and do NOT inject anything - the system handles it correctly.
+      //
       // CGEventFlags is a struct (value type), so this creates a copy
       var eventFlags = CGEventFlags(rawValue: event.flags.rawValue)
-      if KeyListener.shared.isCapsLockPressed && !eventFlags.contains(.maskAlphaShift) {
-        eventFlags.insert(.maskAlphaShift)
+      if Self.shared.capsLockRemapping == .noAction {
+        // Caps Lock is mapped to "No Action" - use HID tracking to inject maskAlphaShift
+        if Self.shared.isPhysicalCapsLockPressed == true
+          && !eventFlags.contains(.maskAlphaShift)
+        {
+          eventFlags.insert(.maskAlphaShift)
+          debugLog(
+            "Injecting .maskAlphaShift for keyCode=\(keyCode) (Caps Lock mapped to No Action)")
+        }
       }
+      // else: Caps Lock is mapped to a modifier - CG events already have correct flags, don't inject
 
       if event.flags.contains(.maskCmdRight) {
         // Another key pressed while holding right command - cancel overlay show
-        KeyListener.shared.cancelOverlayShow()
+        Self.shared.cancelOverlayShow()
       }
 
-      return KeyListener.shared.processKeyPress(key, flags: eventFlags)
+      return Self.shared.processKeyPress(key, flags: eventFlags)
     }
 
     return false
@@ -258,6 +367,65 @@ class KeyListener {
   private func cancelOverlayShow() {
     overlayShowTimer?.invalidate()
     overlayShowTimer = nil
+  }
+
+  private static func handleCapsLockDetection(currentFlags: UInt64) {
+    let previousFlags = Self.shared.previousCGEventFlags
+    let flagDelta = currentFlags ^ previousFlags
+
+    // Check if Caps Lock markers are being ADDED (not removed or staying the same)
+    // AND that no other major modifiers are being added simultaneously (to avoid detecting
+    // Shift+CapsLock as a CapsLock event when CapsLock is already held)
+    let capsLockFlagAdded =
+      ((flagDelta & kCapsLockAsModifierFlag) != 0
+        && (currentFlags & kCapsLockAsModifierFlag) != 0)
+      || ((flagDelta & CGEventFlags.maskAlphaShift.rawValue) != 0
+        && (currentFlags & CGEventFlags.maskAlphaShift.rawValue) != 0)
+
+    // Check if other major modifiers (shift, control, option, command) are being added
+    let otherModifiersAdded =
+      (flagDelta & 0x20000) != 0  // Shift
+      || (flagDelta & 0x40000) != 0  // Control
+      || (flagDelta & 0x80000) != 0  // Option
+      || (flagDelta & 0x100000) != 0  // Command
+
+    if capsLockFlagAdded && !otherModifiersAdded {
+      let detectedRemapping = detectCapsLockRemapping(from: currentFlags)
+
+      // Only update remapping on press (when flags are increasing), not on release
+      // Check if we're pressing (adding flags beyond just 0x100)
+      let isPress = currentFlags > previousFlags && currentFlags > 0x100
+
+      if isPress {
+        let previousRemapping = Self.shared.capsLockRemapping
+        Self.shared.capsLockRemapping = detectedRemapping
+
+        // When remapping changes, update physical state tracking accordingly
+        if detectedRemapping == .noAction {
+          // Enable physical state tracking for "No Action"
+          if Self.shared.isPhysicalCapsLockPressed == nil {
+            Self.shared.isPhysicalCapsLockPressed = false
+          }
+        } else {
+          // Disable physical state tracking for other remappings (rely on CG flags)
+          Self.shared.isPhysicalCapsLockPressed = nil
+        }
+
+        debugLog(
+          "CapsLock press - flags: 0x\(String(currentFlags, radix: 16)), remapping: \(capsLockRemappingDescription(detectedRemapping))"
+        )
+
+        // Log when remapping changes (only if we had a previous remapping)
+        if let prevRemapping = previousRemapping, detectedRemapping != prevRemapping {
+          let prevDesc = capsLockRemappingDescription(prevRemapping)
+          let newDesc = capsLockRemappingDescription(detectedRemapping)
+          debugLog("Caps Lock remapping changed: \(prevDesc) -> \(newDesc)")
+        }
+      }
+    }
+
+    // Always track flags for all events to maintain state
+    Self.shared.previousCGEventFlags = currentFlags
   }
 
   private func processKeyPress(_ key: Key, flags: CGEventFlags) -> Bool {
@@ -374,5 +542,52 @@ class KeyListener {
 
   func start() {
     CFRunLoopRun()
+  }
+
+  private static func detectCapsLockRemapping(from flags: UInt64) -> KeyboardModifierAction {
+    let hasCapsAsModifierFlag = (flags & kCapsLockAsModifierFlag) != 0
+    let hasAlphaShift = (flags & CGEventFlags.maskAlphaShift.rawValue) != 0
+
+    // Priority: Check if both markers present first (standard Caps Lock)
+    if hasCapsAsModifierFlag && hasAlphaShift {
+      return .capsLock
+    } else if hasCapsAsModifierFlag {
+      // 0x100 marker present - Caps Lock is remapped as another modifier
+      if flags & 0x40000 != 0 {
+        return .control
+      } else if flags & 0x80000 != 0 {
+        return .option
+      } else if flags & 0x100000 != 0 {
+        return .command
+      } else if flags & 0x20000 != 0 {
+        return .shift
+      } else if flags & 0x800000 != 0 {
+        return .globe
+      }
+    } else if hasAlphaShift {
+      return .capsLock
+    }
+
+    // Default to noAction if we can't determine
+    return .noAction
+  }
+
+  private static func capsLockRemappingDescription(_ remapping: KeyboardModifierAction) -> String {
+    switch remapping {
+    case .capsLock:
+      return "Caps Lock"
+    case .control:
+      return "Control"
+    case .option:
+      return "Option"
+    case .shift:
+      return "Shift"
+    case .command:
+      return "Command"
+    case .globe:
+      return "Globe/Fn"
+    case .noAction:
+      return "No Action"
+    }
   }
 }
