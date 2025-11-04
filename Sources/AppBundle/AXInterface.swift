@@ -247,6 +247,8 @@ class AXInterface {
     let isTextField = role == "AXTextField"
     let isCheckBox = role == "AXCheckBox"
     let isTextArea = role == "AXTextArea"
+    let isPopUpButton = role == "AXPopUpButton"
+    let isMenuItem = role == "AXMenuItem"
     // Check for AXGroup elements that have AXPress action (e.g., toolbar buttons in rich text editors)
     let isClickableGroup = role == "AXGroup" && hasPressAction(element: element)
 
@@ -266,6 +268,12 @@ class AXInterface {
     if isTextArea {
       debugLog("Found text area element with role: \(role ?? "nil")")
     }
+    if isPopUpButton {
+      debugLog("Found pop-up button element with role: \(role ?? "nil")")
+    }
+    if isMenuItem {
+      debugLog("Found menu item element with role: \(role ?? "nil")")
+    }
     if isClickableGroup {
       debugLog("Found clickable group element with role: \(role ?? "nil")")
     }
@@ -273,7 +281,7 @@ class AXInterface {
     // Only process clickable elements
     guard
       isLink || isButton || isRadioButton || isTab || isTextField || isCheckBox || isTextArea
-        || isClickableGroup
+        || isPopUpButton || isMenuItem || isClickableGroup
     else {
       // Skip non-clickable elements but traverse their children
       processChildren(
@@ -306,6 +314,10 @@ class AXInterface {
         elementType = "CheckBox"
       } else if isTextArea {
         elementType = "TextArea"
+      } else if isPopUpButton {
+        elementType = "PopUpButton"
+      } else if isMenuItem {
+        elementType = "MenuItem"
       } else if isClickableGroup {
         elementType = "Group"
       } else if isLink {
@@ -348,6 +360,10 @@ class AXInterface {
       defaultTitle = "CheckBox"
     } else if isTextArea {
       defaultTitle = "TextArea"
+    } else if isPopUpButton {
+      defaultTitle = "PopUpButton"
+    } else if isMenuItem {
+      defaultTitle = "MenuItem"
     } else if isClickableGroup {
       defaultTitle = "Button"
     } else if isRadioButton {
@@ -373,8 +389,8 @@ class AXInterface {
     let trimmedTitle = resolvedTitle.trimmingCharacters(in: .whitespacesAndNewlines)
     let finalTitle = trimmedTitle.isEmpty ? defaultTitle : trimmedTitle
 
-    // Debug logging for buttons, tabs, text fields, checkboxes, text areas, and clickable groups
-    if isButton || isTab || isTextField || isCheckBox || isTextArea || isClickableGroup {
+    // Debug logging for buttons, tabs, text fields, checkboxes, text areas, pop-up buttons, menu items, and clickable groups
+    if isButton || isTab || isTextField || isCheckBox || isTextArea || isPopUpButton || isMenuItem || isClickableGroup {
       let elementType: String
       if isTab {
         elementType = "tab"
@@ -384,6 +400,10 @@ class AXInterface {
         elementType = "checkbox"
       } else if isTextArea {
         elementType = "text area"
+      } else if isPopUpButton {
+        elementType = "pop-up button"
+      } else if isMenuItem {
+        elementType = "menu item"
       } else if isClickableGroup {
         elementType = "toolbar button"
       } else {
@@ -405,7 +425,7 @@ class AXInterface {
       title: finalTitle)
     {
 
-      if isButton || isTab || isTextField || isCheckBox || isTextArea || isClickableGroup {
+      if isButton || isTab || isTextField || isCheckBox || isTextArea || isPopUpButton || isMenuItem || isClickableGroup {
         let elementType: String
         if isTab {
           elementType = "tab"
@@ -415,6 +435,10 @@ class AXInterface {
           elementType = "checkbox"
         } else if isTextArea {
           elementType = "text area"
+        } else if isPopUpButton {
+          elementType = "pop-up button"
+        } else if isMenuItem {
+          elementType = "menu item"
         } else if isClickableGroup {
           elementType = "toolbar button"
         } else {
@@ -431,7 +455,7 @@ class AXInterface {
         isEnabled: attributes.enabled ?? true
       )
       clickableElements.append(clickable)
-    } else if isButton || isTab || isTextField || isCheckBox || isTextArea || isClickableGroup {
+    } else if isButton || isTab || isTextField || isCheckBox || isTextArea || isPopUpButton || isMenuItem || isClickableGroup {
       let elementType: String
       if isTab {
         elementType = "Tab"
@@ -441,6 +465,10 @@ class AXInterface {
         elementType = "CheckBox"
       } else if isTextArea {
         elementType = "TextArea"
+      } else if isPopUpButton {
+        elementType = "PopUpButton"
+      } else if isMenuItem {
+        elementType = "MenuItem"
       } else if isClickableGroup {
         elementType = "ToolbarButton"
       } else {
