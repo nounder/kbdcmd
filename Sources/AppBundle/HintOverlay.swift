@@ -27,7 +27,9 @@ class HintOverlay {
   static let shared = HintOverlay()
 
   private var window: NSWindow?
-  private var keyboardCoordinator: KeyboardInputCoordinator?
+  private var hintManager: HintManager?
+  private var onElementClick: ((ClickableElement) -> Void)?
+  private var onDismiss: (() -> Void)?
 
   var isVisible: Bool {
     return window != nil
@@ -78,7 +80,9 @@ class HintOverlay {
       guard let self = self else { return }
       self.window?.orderOut(nil)
       self.window = nil
-      self.keyboardCoordinator = nil
+      self.hintManager = nil
+      self.onElementClick = nil
+      self.onDismiss = nil
     }
   }
 
@@ -89,26 +93,44 @@ class HintOverlay {
 
   /// Handles keyboard events from CGEvent tap (called from KeyListener)
   func handleKeyboardEvent(keyCode: Int64, characters: String?) -> Bool {
-    guard let coordinator = keyboardCoordinator else { return false }
+    guard let manager = hintManager else { return false }
 
-    // Create a synthetic NSEvent for the coordinator
-    // We need to convert CGEvent keyCode to NSEvent
-    let event = NSEvent.keyEvent(
-      with: .keyDown,
-      location: NSEvent.mouseLocation,
-      modifierFlags: [],
-      timestamp: ProcessInfo.processInfo.systemUptime,
-      windowNumber: 0,
-      context: nil,
-      characters: characters ?? "",
-      charactersIgnoringModifiers: characters ?? "",
-      isARepeat: false,
-      keyCode: UInt16(keyCode)
-    )
+    // ESC key dismisses overlay
+    if keyCode == 53 {  // ESC key
+      manager.clearPrefix()
+      onDismiss?()
+      return true
+    }
 
-    guard let event = event else { return false }
+    // Backspace/Delete removes last character
+    if keyCode == 51 || keyCode == 117 {  // Backspace or Delete
+      manager.removeLastCharacter()
+      return true
+    }
 
-    return coordinator.handleKeyEvent(event)
+    // Check if it's a valid hint character
+    if let characters = characters?.lowercased(), let firstChar = characters.first,
+      HintManager.hintCharactersSet.contains(firstChar)
+    {
+      let accepted = manager.appendCharacter(firstChar)
+      
+      if accepted {
+        // Check if exactly one match after updating prefix
+        let matchingElements = manager.getMatchingElements(for: manager.typedPrefix)
+
+        // Auto-click if exactly one match
+        if matchingElements.count == 1, let match = matchingElements.first {
+          // Use a small delay to allow visual feedback
+          DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
+            self?.onElementClick?(match.element)
+          }
+        }
+
+        return true
+      }
+    }
+
+    return false
   }
 
   // MARK: - Private Methods
@@ -168,22 +190,22 @@ class HintOverlay {
       return
     }
 
-    // Create keyboard event coordinator
-    let keyboardCoordinator = KeyboardInputCoordinator(
-      elements: elements,
-      onElementClick: { [weak self] element in
-        self?.clickElement(element)
-      },
-      onDismiss: { [weak self] in
-        self?.hide()
-      }
-    )
-    self.keyboardCoordinator = keyboardCoordinator
+    // Create hint manager
+    let manager = HintManager(elements: elements)
+    self.hintManager = manager
+    
+    // Store callbacks
+    self.onElementClick = { [weak self] element in
+      self?.clickElement(element)
+    }
+    self.onDismiss = { [weak self] in
+      self?.hide()
+    }
 
     // Update overlay with elements
     update(
       elements: elements,
-      keyboardCoordinator: keyboardCoordinator,
+      hintManager: manager,
       onElementClick: { [weak self] element in
         self?.clickElement(element)
       },
@@ -209,7 +231,7 @@ class HintOverlay {
   /// Must be called on the main thread
   private func update(
     elements: [ClickableElement],
-    keyboardCoordinator: KeyboardInputCoordinator,
+    hintManager: HintManager,
     onElementClick: @escaping (ClickableElement) -> Void,
     onDismiss: @escaping () -> Void
   ) {
@@ -217,7 +239,7 @@ class HintOverlay {
     guard Thread.isMainThread else {
       DispatchQueue.main.async {
         self.update(
-          elements: elements, keyboardCoordinator: keyboardCoordinator,
+          elements: elements, hintManager: hintManager,
           onElementClick: onElementClick, onDismiss: onDismiss)
       }
       return
@@ -246,13 +268,13 @@ class HintOverlay {
       debugLog("Element \(index + 1) '\(element.title)' at global: \(element.frame)")
     }
 
-    // Create the overlay view with keyboard input handling
+    // Create the overlay view with hint manager
     let overlayView = AccessibilityOverlayView(
       elements: elements,
       windowFrame: windowFrame,
       windowHeight: windowFrame.height,
       isPrimaryScreen: isPrimaryScreen,
-      keyboardCoordinator: keyboardCoordinator,
+      hintManager: hintManager,
       onElementClick: onElementClick,
       onDismiss: onDismiss
     )
@@ -305,18 +327,18 @@ struct AccessibilityOverlayView: View {
   let windowFrame: CGRect  // Window's frame in global screen coordinates
   let windowHeight: CGFloat  // Window height for coordinate conversion
   let isPrimaryScreen: Bool
-  let keyboardCoordinator: KeyboardInputCoordinator
+  let hintManager: HintManager
   let onElementClick: (ClickableElement) -> Void
   let onDismiss: () -> Void
 
-  @ObservedObject private var keyboardInput: KeyboardInputCoordinator
+  @ObservedObject private var manager: HintManager
 
   init(
     elements: [ClickableElement],
     windowFrame: CGRect,
     windowHeight: CGFloat,
     isPrimaryScreen: Bool,
-    keyboardCoordinator: KeyboardInputCoordinator,
+    hintManager: HintManager,
     onElementClick: @escaping (ClickableElement) -> Void,
     onDismiss: @escaping () -> Void
   ) {
@@ -324,22 +346,22 @@ struct AccessibilityOverlayView: View {
     self.windowFrame = windowFrame
     self.windowHeight = windowHeight
     self.isPrimaryScreen = isPrimaryScreen
-    self.keyboardCoordinator = keyboardCoordinator
+    self.hintManager = hintManager
     self.onElementClick = onElementClick
     self.onDismiss = onDismiss
-    self._keyboardInput = ObservedObject(wrappedValue: keyboardCoordinator)
+    self._manager = ObservedObject(wrappedValue: hintManager)
   }
 
   // Computed properties for matching elements
   private var matchingElements: [(index: Int, element: ClickableElement, hint: String)] {
-    keyboardCoordinator.getMatchingElements(for: keyboardCoordinator.typedPrefix)
+    hintManager.getMatchingElements(for: hintManager.typedPrefix)
   }
 
   // Elements to display: all if no prefix, only matching if prefix exists
   private var elementsToDisplay: [(index: Int, element: ClickableElement, hint: String)] {
-    if keyboardCoordinator.typedPrefix.isEmpty {
+    if hintManager.typedPrefix.isEmpty {
       return elements.enumerated().compactMap { offset, element in
-        guard let hint = keyboardCoordinator.getHint(forIndex: offset) else { return nil }
+        guard let hint = hintManager.getHint(forIndex: offset) else { return nil }
         return (index: offset, element: element, hint: hint)
       }
     }
@@ -363,7 +385,7 @@ struct AccessibilityOverlayView: View {
           let elementIndex = item.index
           let element = item.element
           let hint = item.hint
-          let typedPrefix = keyboardCoordinator.typedPrefix
+          let typedPrefix = hintManager.typedPrefix
           let isMatching = matchingElements.contains { $0.index == elementIndex }
           let matchedPrefixLength =
             typedPrefix.isEmpty
@@ -425,7 +447,7 @@ struct AccessibilityOverlayView: View {
     let elementTopYRelativeToWindow = elementTopYInTopLeft - windowTopYInTopLeft
 
     // Debug logging for coordinate conversion (first hint only to avoid spam)
-    if hint == keyboardCoordinator.getHint(forIndex: 0) {
+    if hint == hintManager.getHint(forIndex: 0) {
       debugLog("Coordinate conversion for element '\(hint)' ('\(element.title)'):")
       debugLog("  Element frame (global, top-left origin): \(element.frame)")
       debugLog("  Window frame (global, bottom-left origin): \(windowFrame)")
@@ -527,8 +549,8 @@ struct AccessibilityOverlayView: View {
             .font(.system(size: 14, weight: .medium))
             .foregroundColor(.white)
 
-          if !keyboardCoordinator.typedPrefix.isEmpty {
-            Text("Typed: \(keyboardCoordinator.typedPrefix)")
+          if !hintManager.typedPrefix.isEmpty {
+            Text("Typed: \(hintManager.typedPrefix)")
               .font(.system(size: 12, weight: .semibold))
               .foregroundColor(.yellow)
           }

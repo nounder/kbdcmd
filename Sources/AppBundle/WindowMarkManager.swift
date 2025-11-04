@@ -99,7 +99,7 @@ class WindowMarkManager: ObservableObject {
   }
 
   func getWindowsUsingWindowNumbers() {
-    if let windowNumbers = NSWindow.windowNumbers(options: [.allSpaces, .allApplications]) {
+    if NSWindow.windowNumbers(options: [.allSpaces, .allApplications]) != nil {
       let options: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
       let windowListInfo =
         CGWindowListCopyWindowInfo(options, kCGNullWindowID) as NSArray? as? [[String: Any]]

@@ -1,23 +1,15 @@
-import Cocoa
-import SwiftUI
+import Foundation
 
-/// ObservableObject that handles keyboard input for the overlay
-class KeyboardInputCoordinator: ObservableObject {
+/// Manages hint generation and prefix matching for clickable elements
+class HintManager: ObservableObject {
   let elements: [ClickableElement]
-  let onElementClick: (ClickableElement) -> Void
-  let onDismiss: () -> Void
   let hints: [String]
   let hintToElement: [String: (index: Int, element: ClickableElement)]
 
   @Published var typedPrefix: String = ""
 
-  init(
-    elements: [ClickableElement], onElementClick: @escaping (ClickableElement) -> Void,
-    onDismiss: @escaping () -> Void
-  ) {
+  init(elements: [ClickableElement]) {
     self.elements = elements
-    self.onElementClick = onElementClick
-    self.onDismiss = onDismiss
 
     // Generate hints of consistent length
     self.hints = Self.generateHints(count: elements.count)
@@ -71,51 +63,37 @@ class KeyboardInputCoordinator: ObservableObject {
     return hints
   }
 
-  /// Handles keyboard events for typing hint characters
-  func handleKeyEvent(_ event: NSEvent) -> Bool {
-    // ESC key dismisses overlay
-    if event.keyCode == 53 {  // ESC key
-      typedPrefix = ""
-      onDismiss()
+  /// Returns hint characters used for validation
+  static var hintCharactersSet: Set<Character> {
+    return Set(hintCharacters)
+  }
+
+  /// Updates the typed prefix with a new character
+  /// Returns true if the character was accepted (forms a valid prefix)
+  func appendCharacter(_ char: Character) -> Bool {
+    let newPrefix = typedPrefix + String(char).uppercased()
+    
+    // Check if any hint matches this prefix
+    let hasMatch = hints.contains { $0.hasPrefix(newPrefix) }
+    
+    if hasMatch {
+      typedPrefix = newPrefix
       return true
     }
-
-    // Backspace/Delete clears prefix
-    if event.keyCode == 51 || event.keyCode == 117 {  // Backspace or Delete
-      if !typedPrefix.isEmpty {
-        typedPrefix = String(typedPrefix.dropLast())
-      }
-      return true
-    }
-
-    // Check if it's a valid hint character
-    if let characters = event.characters?.lowercased(), let firstChar = characters.first,
-      Self.hintCharacters.contains(firstChar)
-    {
-      let newPrefix = typedPrefix + String(firstChar).uppercased()
-
-      // Check if any hint matches this prefix
-      let hasMatch = hints.contains { $0.hasPrefix(newPrefix) }
-
-      if hasMatch {
-        typedPrefix = newPrefix
-
-        // Check if exactly one match after updating prefix
-        let matchingElements = getMatchingElements(for: typedPrefix)
-
-        // Auto-click if exactly one match
-        if matchingElements.count == 1, let match = matchingElements.first {
-          // Use a small delay to allow visual feedback
-          DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-            self.onElementClick(match.element)
-          }
-        }
-
-        return true
-      }
-    }
-
+    
     return false
+  }
+
+  /// Removes the last character from the typed prefix
+  func removeLastCharacter() {
+    if !typedPrefix.isEmpty {
+      typedPrefix = String(typedPrefix.dropLast())
+    }
+  }
+
+  /// Clears the typed prefix
+  func clearPrefix() {
+    typedPrefix = ""
   }
 
   func getMatchingElements(for prefix: String) -> [(
@@ -139,3 +117,4 @@ class KeyboardInputCoordinator: ObservableObject {
     return index < hints.count ? hints[index] : nil
   }
 }
+
