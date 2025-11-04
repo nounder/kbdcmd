@@ -25,3 +25,4 @@ struct Permissions {
     NSWorkspace.shared.open(url)
   }
 }
+

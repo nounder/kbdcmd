@@ -16,6 +16,7 @@ struct Kbdcmd: ParsableCommand {
       MarkWindowCommand.self,
       FocusMarkCommand.self,
       SnapshotCommand.self,
+      KeyboardCommand.self,
     ]
   )
 }
