@@ -570,14 +570,43 @@ struct KeyboardCommand: ParsableCommand {
             eventTypeName = "UNKNOWN(\(event.eventType.rawValue))"
         }
 
+        let modifiers = getActiveModifiers(flags: event.flags)
+        let modifiersStr = modifiers.isEmpty ? "None" : modifiers.joined(separator: ", ")
+
         return """
             [\(timeString)] [CG_\(eventTypeName)]
               KeyCode: \(event.keyCode)
               Flags: 0x\(String(event.flags.rawValue, radix: 16))
+              Modifiers: \(modifiersStr)
               Timestamp: \(event.cgTimestamp)
               Source PID: \(event.sourcePID) [\(event.processName)]
               State ID: \(event.eventSourceStateID)
             """
+    }
+
+    private static func getActiveModifiers(flags: CGEventFlags) -> [String] {
+        var modifiers: [String] = []
+
+        if flags.contains(.maskCommand) {
+            modifiers.append("Command")
+        }
+        if flags.contains(.maskAlternate) {
+            modifiers.append("Option")
+        }
+        if flags.contains(.maskShift) {
+            modifiers.append("Shift")
+        }
+        if flags.contains(.maskControl) {
+            modifiers.append("Control")
+        }
+        if flags.contains(.maskSecondaryFn) {
+            modifiers.append("Fn")
+        }
+        if flags.contains(.maskAlphaShift) {
+            modifiers.append("CapsLock")
+        }
+
+        return modifiers
     }
 
     private static func handleInputSourceChange(notification: Notification) {
