@@ -9,29 +9,29 @@ extension AXSnapshotNode {
     case attributes, parameterizedAttributes, actions
     case position, size, zIndex
   }
-  
+
   func encode(to encoder: Encoder) throws {
     var container = encoder.container(keyedBy: CodingKeys.self)
     try container.encode(id, forKey: .id)
-    
+
     // Encode references as { "id": "..." } objects
     if let parent = parent {
       try container.encode(AXSnapshotReference(id: parent.id), forKey: .parent)
     }
-    
+
     if let prevSibling = prevSibling {
       try container.encode(AXSnapshotReference(id: prevSibling.id), forKey: .prevSibling)
     }
-    
+
     if let nextSibling = nextSibling {
       try container.encode(AXSnapshotReference(id: nextSibling.id), forKey: .nextSibling)
     }
-    
+
     try container.encode(children, forKey: .children)
     try container.encode(attributes, forKey: .attributes)
     try container.encode(parameterizedAttributes, forKey: .parameterizedAttributes)
     try container.encode(actions, forKey: .actions)
-    
+
     // Encode geometry as nested objects for cleaner JSON
     if let position = position {
       var posDict: [String: Double] = [:]
@@ -39,25 +39,26 @@ extension AXSnapshotNode {
       posDict["y"] = position.y
       try container.encode(posDict, forKey: .position)
     }
-    
+
     if let size = size {
       var sizeDict: [String: Double] = [:]
       sizeDict["width"] = size.width
       sizeDict["height"] = size.height
       try container.encode(sizeDict, forKey: .size)
     }
-    
+
     try container.encodeIfPresent(zIndex, forKey: .zIndex)
   }
-  
+
   convenience init(from decoder: Decoder) throws {
     let container = try decoder.container(keyedBy: CodingKeys.self)
     let id = try container.decode(String.self, forKey: .id)
     let children = try container.decode([AXSnapshotNode].self, forKey: .children)
     let attributes = try container.decode([String: AXSnapshotValue].self, forKey: .attributes)
-    let parameterizedAttributes = try container.decode([String].self, forKey: .parameterizedAttributes)
+    let parameterizedAttributes = try container.decode(
+      [String].self, forKey: .parameterizedAttributes)
     let actions = try container.decode([AXSnapshotAction].self, forKey: .actions)
-    
+
     // Decode geometry
     let position: CGPoint?
     if let posDict = try container.decodeIfPresent([String: Double].self, forKey: .position) {
@@ -65,16 +66,16 @@ extension AXSnapshotNode {
     } else {
       position = nil
     }
-    
+
     let size: CGSize?
     if let sizeDict = try container.decodeIfPresent([String: Double].self, forKey: .size) {
       size = CGSize(width: sizeDict["width"] ?? 0, height: sizeDict["height"] ?? 0)
     } else {
       size = nil
     }
-    
+
     let zIndex = try container.decodeIfPresent(Int.self, forKey: .zIndex)
-    
+
     self.init(
       id: id,
       parent: nil,  // Will be resolved in post-processing if needed
@@ -97,10 +98,10 @@ extension AXSnapshotValue {
   enum CodingKeys: String, CodingKey {
     case type, value
   }
-  
+
   func encode(to encoder: Encoder) throws {
     var container = encoder.container(keyedBy: CodingKeys.self)
-    
+
     switch self {
     case .string(let s):
       try container.encode("string", forKey: .type)
@@ -162,11 +163,11 @@ extension AXSnapshotValue {
       try container.encode(desc, forKey: .value)
     }
   }
-  
+
   init(from decoder: Decoder) throws {
     let container = try decoder.container(keyedBy: CodingKeys.self)
     let type = try container.decode(String.self, forKey: .type)
-    
+
     switch type {
     case "string":
       self = .string(try container.decode(String.self, forKey: .value))
@@ -212,4 +213,3 @@ extension AXSnapshotValue {
     }
   }
 }
-

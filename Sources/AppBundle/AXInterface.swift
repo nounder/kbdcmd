@@ -246,6 +246,9 @@ class AXInterface {
     let isTab = isTabButton(element: element)
     let isTextField = role == "AXTextField"
     let isCheckBox = role == "AXCheckBox"
+    let isTextArea = role == "AXTextArea"
+    // Check for AXGroup elements that have AXPress action (e.g., toolbar buttons in rich text editors)
+    let isClickableGroup = role == "AXGroup" && hasPressAction(element: element)
 
     // Debug logging for button detection
     if isButton {
@@ -260,9 +263,18 @@ class AXInterface {
     if isCheckBox {
       debugLog("Found checkbox element with role: \(role ?? "nil")")
     }
+    if isTextArea {
+      debugLog("Found text area element with role: \(role ?? "nil")")
+    }
+    if isClickableGroup {
+      debugLog("Found clickable group element with role: \(role ?? "nil")")
+    }
 
     // Only process clickable elements
-    guard isLink || isButton || isRadioButton || isTab || isTextField || isCheckBox else {
+    guard
+      isLink || isButton || isRadioButton || isTab || isTextField || isCheckBox || isTextArea
+        || isClickableGroup
+    else {
       // Skip non-clickable elements but traverse their children
       processChildren(
         of: element,
@@ -292,6 +304,10 @@ class AXInterface {
         elementType = "TextField"
       } else if isCheckBox {
         elementType = "CheckBox"
+      } else if isTextArea {
+        elementType = "TextArea"
+      } else if isClickableGroup {
+        elementType = "Group"
       } else if isLink {
         elementType = "Link"
       } else {
@@ -330,17 +346,35 @@ class AXInterface {
       defaultTitle = "TextField"
     } else if isCheckBox {
       defaultTitle = "CheckBox"
+    } else if isTextArea {
+      defaultTitle = "TextArea"
+    } else if isClickableGroup {
+      defaultTitle = "Button"
     } else if isRadioButton {
       defaultTitle = "RadioButton"
     } else {
       defaultTitle = "Button"
     }
-    let displayTitle = attributes.title ?? getElementDescription(element) ?? defaultTitle
-    let trimmedTitle = displayTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+
+    // For clickable groups (toolbar buttons), prefer AXHelp attribute which often contains descriptive text
+    var displayTitle: String?
+    if isClickableGroup {
+      var help: AnyObject?
+      if AXUIElementCopyAttributeValue(element, kAXHelpAttribute as CFString, &help) == .success,
+        let helpText = help as? String, !helpText.isEmpty
+      {
+        displayTitle = helpText
+      }
+    }
+
+    // Fall back to title or description if not set
+    let resolvedTitle =
+      displayTitle ?? attributes.title ?? getElementDescription(element) ?? defaultTitle
+    let trimmedTitle = resolvedTitle.trimmingCharacters(in: .whitespacesAndNewlines)
     let finalTitle = trimmedTitle.isEmpty ? defaultTitle : trimmedTitle
 
-    // Debug logging for buttons, tabs, text fields, and checkboxes
-    if isButton || isTab || isTextField || isCheckBox {
+    // Debug logging for buttons, tabs, text fields, checkboxes, text areas, and clickable groups
+    if isButton || isTab || isTextField || isCheckBox || isTextArea || isClickableGroup {
       let elementType: String
       if isTab {
         elementType = "tab"
@@ -348,6 +382,10 @@ class AXInterface {
         elementType = "text field"
       } else if isCheckBox {
         elementType = "checkbox"
+      } else if isTextArea {
+        elementType = "text area"
+      } else if isClickableGroup {
+        elementType = "toolbar button"
       } else {
         elementType = "button"
       }
@@ -367,7 +405,7 @@ class AXInterface {
       title: finalTitle)
     {
 
-      if isButton || isTab || isTextField || isCheckBox {
+      if isButton || isTab || isTextField || isCheckBox || isTextArea || isClickableGroup {
         let elementType: String
         if isTab {
           elementType = "tab"
@@ -375,6 +413,10 @@ class AXInterface {
           elementType = "text field"
         } else if isCheckBox {
           elementType = "checkbox"
+        } else if isTextArea {
+          elementType = "text area"
+        } else if isClickableGroup {
+          elementType = "toolbar button"
         } else {
           elementType = "button"
         }
@@ -389,7 +431,7 @@ class AXInterface {
         isEnabled: attributes.enabled ?? true
       )
       clickableElements.append(clickable)
-    } else if isButton || isTab || isTextField || isCheckBox {
+    } else if isButton || isTab || isTextField || isCheckBox || isTextArea || isClickableGroup {
       let elementType: String
       if isTab {
         elementType = "Tab"
@@ -397,6 +439,10 @@ class AXInterface {
         elementType = "TextField"
       } else if isCheckBox {
         elementType = "CheckBox"
+      } else if isTextArea {
+        elementType = "TextArea"
+      } else if isClickableGroup {
+        elementType = "ToolbarButton"
       } else {
         elementType = "Button"
       }
@@ -434,6 +480,18 @@ class AXInterface {
     }
 
     return false
+  }
+
+  /// Checks if an element has the AXPress action (indicating it's clickable)
+  private func hasPressAction(element: AXUIElement) -> Bool {
+    var actionNames: CFArray?
+    let result = AXUIElementCopyActionNames(element, &actionNames)
+
+    guard result == .success, let actions = actionNames as? [String] else {
+      return false
+    }
+
+    return actions.contains(kAXPressAction as String)
   }
 
   /// Checks if an element is a window control button (close, minimize, full screen)

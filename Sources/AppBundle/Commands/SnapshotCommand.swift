@@ -57,32 +57,32 @@ struct SnapshotCommand: ParsableCommand {
     print("Application: \(frontmostApp.localizedName ?? "Unknown")")
     print("Timestamp: \(formatDate(Date()))")
     print()
-    
+
     // For text output, show nodes as they're captured in real-time
     if format == .text {
       print("=== Tree Structure ===")
     }
-    
+
     let startTime = Date()
     var nodeCount = 0
-    
+
     // For JSON mode, print opening bracket for array
     if format == .json {
       print("[")
     }
-    
+
     var isFirstJsonNode = true
-    
+
     let _ = AXSnapshot.snapshot(root: appElement) { nodeId, count, node in
       nodeCount = count
-      
+
       if format == .text {
         // Print node in real-time for text mode with full details
         let depth = nodeId.components(separatedBy: "-").count - 1
         let prefix = String(repeating: "  ", count: depth)
         let role = extractStringValue(node.attributes["AXRole"]) ?? "Unknown"
         let title = extractStringValue(node.attributes["AXTitle"])
-        
+
         // Print node header
         print("\(prefix)[\(nodeId)] \(role)", terminator: "")
         if let title = title, !title.isEmpty {
@@ -90,17 +90,19 @@ struct SnapshotCommand: ParsableCommand {
         } else {
           print()
         }
-        
+
         // Print geometry if available
         if let pos = node.position, let size = node.size {
-          print("\(prefix)  @ (\(Int(pos.x)), \(Int(pos.y))) \(Int(size.width))×\(Int(size.height))", terminator: "")
+          print(
+            "\(prefix)  @ (\(Int(pos.x)), \(Int(pos.y))) \(Int(size.width))×\(Int(size.height))",
+            terminator: "")
           if let z = node.zIndex {
             print(" z:\(z)")
           } else {
             print()
           }
         }
-        
+
         // Print attributes if --full or --attributes is specified
         if let filter = attributeFilter {
           let filteredAttrs = node.attributes.filter { filter.contains($0.key) }
@@ -118,19 +120,19 @@ struct SnapshotCommand: ParsableCommand {
             }
           }
         }
-        
+
         // Print actions if any
         if !node.actions.isEmpty {
           let actionNames = node.actions.map { $0.name }.joined(separator: ", ")
           print("\(prefix)  Actions: \(actionNames)")
         }
-        
+
         // Print parameterized attributes if any
         if !node.parameterizedAttributes.isEmpty {
           let paramNames = node.parameterizedAttributes.joined(separator: ", ")
           print("\(prefix)  Parameterized: \(paramNames)")
         }
-        
+
         fflush(stdout)
       } else {
         // JSON mode: print each node as flat object in array
@@ -139,15 +141,15 @@ struct SnapshotCommand: ParsableCommand {
           print(",")
         }
         isFirstJsonNode = false
-        
+
         // Print node as JSON object
         try? printFlatJsonNode(node, attributeFilter: attributeFilter)
         fflush(stdout)
       }
     }
-    
+
     let duration = Date().timeIntervalSince(startTime)
-    
+
     // Finalize output based on format
     if format == .text {
       print()
@@ -546,9 +548,9 @@ struct SnapshotCommand: ParsableCommand {
       timing: timingInfo
     )
   }
-  
+
   // MARK: - Flat JSON Output
-  
+
   private struct FlatJsonNode: Codable {
     let id: String
     let parentId: String?
@@ -560,13 +562,13 @@ struct SnapshotCommand: ParsableCommand {
     let position: CGPoint?
     let size: CGSize?
     let zIndex: Int?
-    
+
     enum CodingKeys: String, CodingKey {
       case id, parentId, prevSiblingId, nextSiblingId
       case attributes, parameterizedAttributes, actions
       case position, size, zIndex
     }
-    
+
     func encode(to encoder: Encoder) throws {
       var container = encoder.container(keyedBy: CodingKeys.self)
       try container.encode(id, forKey: .id)
@@ -576,25 +578,25 @@ struct SnapshotCommand: ParsableCommand {
       try container.encode(attributes, forKey: .attributes)
       try container.encode(parameterizedAttributes, forKey: .parameterizedAttributes)
       try container.encode(actions, forKey: .actions)
-      
+
       if let position = position {
         var posDict: [String: Double] = [:]
         posDict["x"] = position.x
         posDict["y"] = position.y
         try container.encode(posDict, forKey: .position)
       }
-      
+
       if let size = size {
         var sizeDict: [String: Double] = [:]
         sizeDict["width"] = size.width
         sizeDict["height"] = size.height
         try container.encode(sizeDict, forKey: .size)
       }
-      
+
       try container.encodeIfPresent(zIndex, forKey: .zIndex)
     }
   }
-  
+
   private func printFlatJsonNode(_ node: MutableNode, attributeFilter: Set<String>?) throws {
     // Filter attributes if needed
     let attrs: [String: AXSnapshotValue]
@@ -603,7 +605,7 @@ struct SnapshotCommand: ParsableCommand {
     } else {
       attrs = node.attributes
     }
-    
+
     let flatNode = FlatJsonNode(
       id: node.id,
       parentId: node.parent?.id,
@@ -616,10 +618,10 @@ struct SnapshotCommand: ParsableCommand {
       size: node.size,
       zIndex: node.zIndex
     )
-    
+
     let encoder = JSONEncoder()
     encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-    
+
     let jsonData = try encoder.encode(flatNode)
     if let jsonString = String(data: jsonData, encoding: .utf8) {
       // Indent each line by 2 spaces for array formatting
