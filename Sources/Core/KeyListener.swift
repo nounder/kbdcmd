@@ -212,10 +212,11 @@ public class KeyListener {
       debugLog("ERROR: Failed to start HID monitor: \(error)")
     }
 
-    // Listen for keyDown, keyUp, and flagsChanged events (for modifier keys like right command)
+    // Listen for keyDown, keyUp, flagsChanged, and mouse events
     let eventMask =
       (1 << CGEventType.keyDown.rawValue) | (1 << CGEventType.keyUp.rawValue)
       | (1 << CGEventType.flagsChanged.rawValue)
+      | (1 << CGEventType.leftMouseDown.rawValue)
     guard
       let eventTap = CGEvent.tapCreate(
         tap: .cgSessionEventTap,
@@ -255,6 +256,18 @@ public class KeyListener {
   }
 
   static func handleEvent(proxy: CGEventTapProxy, type: CGEventType, event: CGEvent) -> Bool {
+    // Handle mouse clicks for overlays
+    if type == .leftMouseDown {
+      if KeybindingAssignmentOverlay.shared.isVisible {
+        return KeybindingAssignmentOverlay.shared.handleMouseClick()
+      }
+      // Consume mouse clicks when window switcher is visible (clicks on the UI are handled by SwiftUI)
+      if WindowSwitcherOverlay.shared.isVisible {
+        return false  // Let SwiftUI handle the clicks
+      }
+      return false
+    }
+
     let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
 
     if type == .keyDown || type == .keyUp || type == .flagsChanged {
@@ -296,6 +309,23 @@ public class KeyListener {
       // Skip Caps Lock key itself - it's handled via flagsChanged and HID events
       if keyCode == 57 || keyCode == 62 {
         return false  // Don't consume the event, let it pass through
+      }
+
+      // If keybinding assignment overlay is visible, handle keyboard events for it
+      if KeybindingAssignmentOverlay.shared.isVisible {
+        let char = Self.keyCodeToString(keyCode: Int(keyCode), event: event)
+        if KeybindingAssignmentOverlay.shared.handleKeyPress(keyCode: keyCode, characters: char) {
+          return true  // Event was handled by overlay
+        }
+        return false  // Let other events pass through
+      }
+
+      // If window switcher overlay is visible, consume all keyboard events (except ESC to close)
+      if WindowSwitcherOverlay.shared.isVisible {
+        if keyCode == 53 {  // ESC key closes overlay
+          WindowSwitcherOverlay.shared.hide()
+        }
+        return true  // Consume all events when switcher is visible
       }
 
       // ESC key (keyCode 53) dismisses accessibility overlay
@@ -358,13 +388,12 @@ public class KeyListener {
     // Cancel any existing timer
     overlayShowTimer?.invalidate()
 
-    // Schedule new timer to show overlay after 200ms
-    overlayShowTimer = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: false) { _ in
+    overlayShowTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: false) { _ in
       WindowSwitcherOverlay.shared.show()
     }
   }
 
-  private func cancelOverlayShow() {
+  public func cancelOverlayShow() {
     overlayShowTimer?.invalidate()
     overlayShowTimer = nil
   }

@@ -19,6 +19,13 @@ struct DaemonCommand: ParsableCommand {
   private func registerDefaultKeybindings() {
     let kb = Keybindings.shared
 
+    // Right Command + ` to assign keybinding for frontmost app
+    kb.register([KeyPress(key: .character("`"), flags: .maskCmdRight)]) { _ in
+      if let appPath = WindowSwitcherOverlay.getFrontmostAppPath() {
+        KeybindingAssignmentOverlay.shared.show(for: appPath)
+      }
+    }
+
     kb.register([KeyPress(key: .character("L"), flags: .maskCmdRight)]) { _ in
       WindowManager.main.cycleAppWindows()
     }
@@ -32,6 +39,10 @@ struct DaemonCommand: ParsableCommand {
     }
 
     kb.register([KeyPress(key: .character("O"), flags: .maskAlphaShift)]) { _ in
+      HintOverlay.shared.show()
+    }
+
+    kb.register([KeyPress(key: .character("/"), flags: .maskCmdRight)]) { _ in
       HintOverlay.shared.show()
     }
 

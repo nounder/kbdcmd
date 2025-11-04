@@ -1,5 +1,6 @@
 import Carbon
 import Cocoa
+import Foundation
 
 // MARK: - Key Enum (Union type: Character or SpecialKey)
 
@@ -92,6 +93,18 @@ private class SequenceNode {
   var children: [KeyInSequence: SequenceNode] = [:]
 }
 
+// MARK: - Persistence Model
+
+struct AppKeybinding: Codable {
+  let letter: String
+  let appPath: String
+}
+
+struct KeybindingsFile: Codable {
+  let version: Int
+  let items: [AppKeybinding]
+}
+
 // MARK: - Keybindings Class
 
 public class Keybindings {
@@ -99,6 +112,9 @@ public class Keybindings {
 
   // Unified storage: trie structure for all keybindings (single-key and sequences)
   private var sequenceRoot = SequenceNode()
+
+  // In-memory storage for app keybindings (letter -> app path)
+  private var appKeybindings: [Character: String] = [:]
 
   // Modifier mask for extracting only relevant flags
   private let modifierMask: UInt64 = {
@@ -108,7 +124,24 @@ public class Keybindings {
       | CGEventFlags.maskAlphaShift.rawValue
   }()
 
+  private let configDirectory: URL
+  private let keysFileURL: URL
+
   init() {
+    // Setup config directory: $HOME/.config/kbdcmd
+    let homeDirectory = FileManager.default.homeDirectoryForCurrentUser
+    configDirectory = homeDirectory.appendingPathComponent(".config/kbdcmd")
+    keysFileURL = configDirectory.appendingPathComponent("keys.json")
+    
+    // Create config directory if it doesn't exist
+    try? FileManager.default.createDirectory(
+      at: configDirectory,
+      withIntermediateDirectories: true,
+      attributes: nil
+    )
+    
+    // Load saved keybindings
+    loadKeybindings()
   }
 
   // MARK: - Registration
@@ -245,6 +278,86 @@ public class Keybindings {
     }
     // Neither is a subset of the other - use raw value as tiebreaker
     return a > b
+  }
+
+  // MARK: - App Keybinding Management
+
+  public func assignAppKeybinding(letter: Character, appPath: String) {
+    let upperLetter = Character(String(letter).uppercased())
+    
+    // If this app already has a different keybinding, remove it
+    if let existingKey = getKeybindingForApp(appPath), existingKey != upperLetter {
+      appKeybindings.removeValue(forKey: existingKey)
+    }
+    
+    // Assign new keybinding (this will overwrite if the letter was already assigned to another app)
+    appKeybindings[upperLetter] = appPath
+    
+    // Register the keybinding with right command
+    register([KeyPress(key: .character(upperLetter), flags: .maskCmdRight)]) { _ in
+      _ = try? ApplicationManager.openOrFocus(appPath)
+    }
+    
+    // Save to disk
+    saveKeybindings()
+  }
+
+  public func getAppKeybindings() -> [Character: String] {
+    return appKeybindings
+  }
+
+  public func getKeybindingForApp(_ appPath: String) -> Character? {
+    return appKeybindings.first { $0.value == appPath }?.key
+  }
+
+  // MARK: - Persistence
+
+  private func loadKeybindings() {
+    guard FileManager.default.fileExists(atPath: keysFileURL.path) else {
+      return
+    }
+    
+    do {
+      let data = try Data(contentsOf: keysFileURL)
+      let file = try JSONDecoder().decode(KeybindingsFile.self, from: data)
+      
+      // Check version compatibility (currently only version 1 exists)
+      guard file.version == 1 else {
+        print("Unsupported keybindings file version: \(file.version)")
+        return
+      }
+      
+      // Restore keybindings
+      for binding in file.items {
+        guard let letter = binding.letter.first else { continue }
+        let upperLetter = Character(String(letter).uppercased())
+        appKeybindings[upperLetter] = binding.appPath
+        
+        // Register the keybinding
+        register([KeyPress(key: .character(upperLetter), flags: .maskCmdRight)]) { _ in
+          _ = try? ApplicationManager.openOrFocus(binding.appPath)
+        }
+      }
+    } catch {
+      print("Failed to load keybindings: \(error)")
+    }
+  }
+
+  private func saveKeybindings() {
+    let bindings = appKeybindings.map { letter, appPath in
+      AppKeybinding(letter: String(letter), appPath: appPath)
+    }.sorted { $0.letter < $1.letter }
+    
+    let file = KeybindingsFile(version: 1, items: bindings)
+    
+    do {
+      let encoder = JSONEncoder()
+      encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+      let data = try encoder.encode(file)
+      try data.write(to: keysFileURL, options: .atomic)
+    } catch {
+      print("Failed to save keybindings: \(error)")
+    }
   }
 
   // MARK: - Helpers
