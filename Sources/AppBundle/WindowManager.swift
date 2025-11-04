@@ -165,7 +165,7 @@ class WindowManager {
 
     // Simulate pressing the number key for the desired desktop
     let desktopKeyCode = CGKeyCode(0x12 + (number - 1))  // 0x12 is '1' key
-    Keyboard.simulateKeyPress(keyCode: desktopKeyCode, flags: .maskControl)
+    KeyboardSimulator.simulateKeyPress(keyCode: desktopKeyCode, flags: .maskControl)
 
     print("Switched to desktop \(number)")
   }

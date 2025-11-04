@@ -2,7 +2,7 @@ import ApplicationServices
 import Cocoa
 import Foundation
 
-struct Keyboard {
+struct KeyboardSimulator {
   static func simulateKeyPress(keyCode: CGKeyCode, flags: CGEventFlags) {
     guard let source = CGEventSource(stateID: .hidSystemState) else { return }
 
