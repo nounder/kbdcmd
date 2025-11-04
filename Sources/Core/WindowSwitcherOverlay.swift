@@ -2,8 +2,8 @@ import Cocoa
 import Combine
 import SwiftUI
 
-class WindowSwitcherOverlay: NSObject {
-  static let shared = WindowSwitcherOverlay()
+public class WindowSwitcherOverlay: NSObject {
+  public static let shared = WindowSwitcherOverlay()
 
   private var window: NSWindow?
   private var hostingView: NSHostingView<WindowSwitcherView>?
@@ -13,7 +13,7 @@ class WindowSwitcherOverlay: NSObject {
     super.init()
   }
 
-  func show() {
+  public func show() {
     guard window == nil else {
       window?.orderFrontRegardless()
       return
@@ -51,7 +51,7 @@ class WindowSwitcherOverlay: NSObject {
     startObservingWindowChanges()
   }
 
-  func hide() {
+  public func hide() {
     stopObservingWindowChanges()
     window?.orderOut(nil)
     window = nil

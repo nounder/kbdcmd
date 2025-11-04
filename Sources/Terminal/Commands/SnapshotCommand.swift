@@ -2,6 +2,7 @@ import AppKit
 import ApplicationServices
 import ArgumentParser
 import Foundation
+import Core
 
 struct SnapshotCommand: ParsableCommand {
   static let configuration = CommandConfiguration(

@@ -4,38 +4,50 @@ import Foundation
 // MARK: - AXSnapshot
 
 /// A complete snapshot of an accessibility tree with timing information
-struct AXSnapshot: Codable {
-  let root: AXSnapshotNode
-  let timings: [TimingEntry]
-  let metadata: SnapshotMetadata
+public struct AXSnapshot: Codable {
+  public let root: AXSnapshotNode
+  public let timings: [TimingEntry]
+  public let metadata: SnapshotMetadata
+  
+  public init(root: AXSnapshotNode, timings: [TimingEntry], metadata: SnapshotMetadata) {
+    self.root = root
+    self.timings = timings
+    self.metadata = metadata
+  }
 
-  struct SnapshotMetadata: Codable {
-    let timestamp: Date
-    let totalDuration: TimeInterval
-    let nodeCount: Int
+  public struct SnapshotMetadata: Codable {
+    public let timestamp: Date
+    public let totalDuration: TimeInterval
+    public let nodeCount: Int
+    
+    public init(timestamp: Date, totalDuration: TimeInterval, nodeCount: Int) {
+      self.timestamp = timestamp
+      self.totalDuration = totalDuration
+      self.nodeCount = nodeCount
+    }
   }
 }
 
 // MARK: - AXSnapshotNode
 
 /// Represents a single node in the accessibility tree snapshot
-final class AXSnapshotNode: Codable {
-  let id: String
-  weak var parent: AXSnapshotNode?
-  weak var prevSibling: AXSnapshotNode?
-  weak var nextSibling: AXSnapshotNode?
-  var children: [AXSnapshotNode]
+public final class AXSnapshotNode: Codable {
+  public let id: String
+  public weak var parent: AXSnapshotNode?
+  public weak var prevSibling: AXSnapshotNode?
+  public weak var nextSibling: AXSnapshotNode?
+  public var children: [AXSnapshotNode]
 
-  let attributes: [String: AXSnapshotValue]
-  let parameterizedAttributes: [String]
-  let actions: [AXSnapshotAction]
+  public let attributes: [String: AXSnapshotValue]
+  public let parameterizedAttributes: [String]
+  public let actions: [AXSnapshotAction]
 
   // Extracted geometry/position info
-  let position: CGPoint?
-  let size: CGSize?
-  let zIndex: Int?
+  public let position: CGPoint?
+  public let size: CGSize?
+  public let zIndex: Int?
 
-  init(
+  public init(
     id: String,
     parent: AXSnapshotNode?,
     prevSibling: AXSnapshotNode?,
@@ -65,22 +77,31 @@ final class AXSnapshotNode: Codable {
 // MARK: - AXSnapshotReference
 
 /// A reference to another node in the tree (for parent/sibling relationships)
-struct AXSnapshotReference: Codable {
-  let id: String
+public struct AXSnapshotReference: Codable {
+  public let id: String
+  
+  public init(id: String) {
+    self.id = id
+  }
 }
 
 // MARK: - AXSnapshotAction
 
 /// Represents an accessibility action that can be performed on an element
-struct AXSnapshotAction: Codable {
-  let name: String
-  let description: String?
+public struct AXSnapshotAction: Codable {
+  public let name: String
+  public let description: String?
+  
+  public init(name: String, description: String?) {
+    self.name = name
+    self.description = description
+  }
 }
 
 // MARK: - AXSnapshotValue
 
 /// Represents any value type that can appear in accessibility attributes
-enum AXSnapshotValue: Codable {
+public enum AXSnapshotValue: Codable {
   case string(String)
   case number(Double)
   case bool(Bool)
@@ -101,11 +122,18 @@ enum AXSnapshotValue: Codable {
 // MARK: - TimingEntry
 
 /// Records timing information for each operation during snapshot
-struct TimingEntry: Codable {
-  let operation: String
-  let nodeId: String
-  let duration: TimeInterval
-  let timestamp: Date
+public struct TimingEntry: Codable {
+  public let operation: String
+  public let nodeId: String
+  public let duration: TimeInterval
+  public let timestamp: Date
+  
+  public init(operation: String, nodeId: String, duration: TimeInterval, timestamp: Date) {
+    self.operation = operation
+    self.nodeId = nodeId
+    self.duration = duration
+    self.timestamp = timestamp
+  }
 }
 
 // MARK: - TimingRecorder
@@ -160,7 +188,7 @@ extension AXSnapshot {
   /// - Parameters:
   ///   - root: The root AXUIElement to start traversal from
   ///   - progressCallback: Optional callback called for each node processed (nodeId, nodeCount, node)
-  static func snapshot(
+  public static func snapshot(
     root: AXUIElement,
     progressCallback: ((String, Int, MutableNode) -> Void)? = nil
   ) -> AXSnapshot {
@@ -266,21 +294,21 @@ extension AXSnapshot {
 // MARK: - MutableNode
 
 /// Internal mutable node used during tree construction
-internal class MutableNode {
-  let id: String
-  weak var parent: MutableNode?
-  weak var prevSibling: MutableNode?
-  var nextSibling: MutableNode?
-  var children: [MutableNode] = []
+public class MutableNode {
+  public let id: String
+  public weak var parent: MutableNode?
+  public weak var prevSibling: MutableNode?
+  public var nextSibling: MutableNode?
+  public var children: [MutableNode] = []
 
-  let attributes: [String: AXSnapshotValue]
-  let parameterizedAttributes: [String]
-  let actions: [AXSnapshotAction]
-  let position: CGPoint?
-  let size: CGSize?
-  let zIndex: Int?
+  public let attributes: [String: AXSnapshotValue]
+  public let parameterizedAttributes: [String]
+  public let actions: [AXSnapshotAction]
+  public let position: CGPoint?
+  public let size: CGSize?
+  public let zIndex: Int?
 
-  init(
+  public init(
     id: String,
     parent: MutableNode?,
     prevSibling: MutableNode?,

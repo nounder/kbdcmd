@@ -1,5 +1,6 @@
 import ArgumentParser
 import Foundation
+import Core
 
 struct DaemonCommand: ParsableCommand {
   static let configuration = CommandConfiguration(

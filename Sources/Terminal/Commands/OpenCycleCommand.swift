@@ -1,9 +1,10 @@
 import ArgumentParser
+import Core
 
-struct OpenCommand: ParsableCommand {
+struct OpenCycleCommand: ParsableCommand {
   static let configuration = CommandConfiguration(
-    commandName: "open",
-    abstract: "Open or focus an application"
+    commandName: "open-cycle",
+    abstract: "Open or focus an application, then cycle through its windows"
   )
 
   @Argument(help: "Application name or path (e.g., Safari or /Applications/Safari.app)")
@@ -13,6 +14,10 @@ struct OpenCommand: ParsableCommand {
     try Permissions.checkAccessibility()
     // Try to resolve app name first, fall back to provided path
     let resolvedPath = ApplicationManager.resolve(appPath) ?? appPath
-    _ = try ApplicationManager.openOrFocus(resolvedPath)
+    let result = try ApplicationManager.openOrFocus(resolvedPath)
+
+    if result == .opened {
+      WindowManager.main.cycleAppWindows()
+    }
   }
 }

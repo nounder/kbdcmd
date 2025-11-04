@@ -3,8 +3,8 @@ import Cocoa
 import IOKit.hid
 import InputMethodKit
 
-class KeyListener {
-  static let shared = KeyListener()
+public class KeyListener {
+  public static let shared = KeyListener()
 
   private var eventTap: CFMachPort?
   private var sequenceBuffer: [KeyPress] = []
@@ -458,7 +458,7 @@ class KeyListener {
     }
   }
 
-  static func keyCodeToString(keyCode: Int, event: CGEvent) -> String? {
+  public static func keyCodeToString(keyCode: Int, event: CGEvent) -> String? {
     guard
       let inputSource = TISCopyCurrentASCIICapableKeyboardLayoutInputSource()?.takeRetainedValue(),
       let layoutData = TISGetInputSourceProperty(inputSource, kTISPropertyUnicodeKeyLayoutData),
@@ -495,7 +495,7 @@ class KeyListener {
     return stringLength > 0 ? String(utf16CodeUnits: unicodeString, count: stringLength) : nil
   }
 
-  static func stringToKeyCode(char: String) -> CGKeyCode? {
+  public static func stringToKeyCode(char: String) -> CGKeyCode? {
     guard
       let inputSource = TISCopyCurrentASCIICapableKeyboardLayoutInputSource()?.takeRetainedValue(),
       let layoutData = TISGetInputSourceProperty(inputSource, kTISPropertyUnicodeKeyLayoutData),
@@ -540,7 +540,7 @@ class KeyListener {
     return nil
   }
 
-  func start() {
+  public func start() {
     CFRunLoopRun()
   }
 

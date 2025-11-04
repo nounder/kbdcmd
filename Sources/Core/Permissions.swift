@@ -6,8 +6,8 @@ enum PermissionError: Error {
   case accessibilityNotGranted
 }
 
-struct Permissions {
-  static func checkAccessibility() throws {
+public struct Permissions {
+  public static func checkAccessibility() throws {
     if !AXIsProcessTrusted() {
       print("Error: This application doesn't have the required accessibility permissions.")
       print(

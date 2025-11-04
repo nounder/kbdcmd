@@ -23,15 +23,15 @@ class AccessibilityOverlayWindow: NSWindow {
 
 /// Manages the UI overlay window and views for displaying clickable element hints
 /// Coordinates between AXInterface, keyboard input, and UI display
-class HintOverlay {
-  static let shared = HintOverlay()
+public class HintOverlay {
+  public static let shared = HintOverlay()
 
   private var window: NSWindow?
   private var hintManager: HintManager?
   private var onElementClick: ((ClickableElement) -> Void)?
   private var onDismiss: (() -> Void)?
 
-  var isVisible: Bool {
+  public var isVisible: Bool {
     return window != nil
   }
 
@@ -40,7 +40,7 @@ class HintOverlay {
   // MARK: - Public Interface
 
   /// Shows the accessibility overlay with clickable elements
-  func show() {
+  public func show() {
     // If already visible, bring to front
     guard !isVisible else {
       bringToFront()
@@ -74,7 +74,7 @@ class HintOverlay {
   }
 
   /// Hides and dismisses the overlay
-  func hide() {
+  public func hide() {
     // Ensure UI updates happen on main thread
     DispatchQueue.main.async { [weak self] in
       guard let self = self else { return }

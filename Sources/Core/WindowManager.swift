@@ -13,8 +13,8 @@ enum DesktopError: Error {
   case invalidDesktopNumber
 }
 
-class WindowManager {
-  static let main = WindowManager()
+public class WindowManager {
+  public static let main = WindowManager()
 
   func getFrontmostApplication() -> NSRunningApplication? {
     return NSWorkspace.shared.frontmostApplication
@@ -59,7 +59,7 @@ class WindowManager {
     return windows
   }
 
-  func cycleAppWindows() {
+  public func cycleAppWindows() {
     guard let frontmostApp = getFrontmostApplication() else {
       print("Cannot get frontmost application")
       return
@@ -158,7 +158,7 @@ class WindowManager {
     return false
   }
 
-  func switchToDesktop(number: Int) throws {
+  public func switchToDesktop(number: Int) throws {
     guard (1...9).contains(number) else {
       throw DesktopError.invalidDesktopNumber
     }

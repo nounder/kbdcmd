@@ -2,14 +2,14 @@ import ApplicationServices
 import Cocoa
 import Foundation
 
-enum ApplicationOpenResult {
+public enum ApplicationOpenResult {
   case invalidPath
   case opened
   case focused
 }
 
-struct ApplicationManager {
-  static func resolve(_ appName: String) -> String? {
+public struct ApplicationManager {
+  public static func resolve(_ appName: String) -> String? {
     let fileManager = FileManager.default
 
     let normalizedName = appName.hasSuffix(".app") ? appName : "\(appName).app"
@@ -42,7 +42,7 @@ struct ApplicationManager {
     return nil
   }
 
-  static func openOrFocus(_ appPath: String, ignoreMinimized: Bool = true) throws
+  public static func openOrFocus(_ appPath: String, ignoreMinimized: Bool = true) throws
     -> ApplicationOpenResult
   {
     let fileManager = FileManager.default

@@ -6,15 +6,32 @@ import PackageDescription
 let package = Package(
   name: "kbdcmd",
   platforms: [.macOS(.v12)],
+  products: [
+    .library(name: "Core", targets: ["Core"]),
+    .executable(name: "kbdcmd", targets: ["Terminal"]),
+    .executable(name: "kbdcmd-app", targets: ["Desktop"]),
+  ],
   dependencies: [
     .package(url: "https://github.com/apple/swift-argument-parser", from: "1.3.0")
   ],
   targets: [
+    .target(
+      name: "Core",
+      dependencies: [],
+      path: "Sources/Core"
+    ),
     .executableTarget(
-      name: "kbdcmd",
+      name: "Terminal",
       dependencies: [
-        .product(name: "ArgumentParser", package: "swift-argument-parser")
-      ]
-    )
+        "Core",
+        .product(name: "ArgumentParser", package: "swift-argument-parser"),
+      ],
+      path: "Sources/Terminal"
+    ),
+    .executableTarget(
+      name: "Desktop",
+      dependencies: ["Core"],
+      path: "Sources/Desktop"
+    ),
   ]
 )

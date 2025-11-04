@@ -1,4 +1,5 @@
 import ArgumentParser
+import Core
 
 struct FocusMarkCommand: ParsableCommand {
   static let configuration = CommandConfiguration(

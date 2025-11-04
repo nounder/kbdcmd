@@ -3,11 +3,11 @@ import Cocoa
 
 // MARK: - Key Enum (Union type: Character or SpecialKey)
 
-enum Key: Hashable {
+public enum Key: Hashable {
   case character(Character)
   case named(Named)
 
-  enum Named: Int64, CaseIterable {
+  public enum Named: Int64, CaseIterable {
     case escape = 53
     case tab = 48
     case `return` = 36
@@ -45,13 +45,13 @@ enum Key: Hashable {
 
 // MARK: - Modifier Enum
 
-enum Modifier: Hashable {
+public enum Modifier: Hashable {
   case control(Side)
   case option(Side)
   case command(Side)
   case capsLock
 
-  enum Side: Hashable {
+  public enum Side: Hashable {
     case left
     case right
     case either
@@ -60,11 +60,11 @@ enum Modifier: Hashable {
 
 // MARK: - Sequence Support
 
-struct KeyPress {
-  let key: Key
-  let flags: CGEventFlags
+public struct KeyPress {
+  public let key: Key
+  public let flags: CGEventFlags
 
-  init(key: Key, flags: CGEventFlags = CGEventFlags(rawValue: 0)) {
+  public init(key: Key, flags: CGEventFlags = CGEventFlags(rawValue: 0)) {
     self.key = key
     self.flags = flags
   }
@@ -94,8 +94,8 @@ private class SequenceNode {
 
 // MARK: - Keybindings Class
 
-class Keybindings {
-  static let shared = Keybindings()
+public class Keybindings {
+  public static let shared = Keybindings()
 
   // Unified storage: trie structure for all keybindings (single-key and sequences)
   private var sequenceRoot = SequenceNode()
@@ -113,7 +113,7 @@ class Keybindings {
 
   // MARK: - Registration
 
-  func register<S: Sequence>(
+  public func register<S: Sequence>(
     _ sequence: S, consume: Bool = true, action: @escaping ([KeyPress]) -> Void
   )
   where S.Element == KeyPress {
@@ -153,13 +153,13 @@ class Keybindings {
 
   // MARK: - Lookup
 
-  enum SequenceMatch {
+  public enum SequenceMatch {
     case complete(action: ([KeyPress]) -> Void, sequence: [KeyPress], consume: Bool)
     case partial
     case noMatch
   }
 
-  func matchSequence<S: Sequence>(_ buffer: S) -> SequenceMatch
+  public func matchSequence<S: Sequence>(_ buffer: S) -> SequenceMatch
   where S.Element == KeyPress {
 
     let bufferArray = Array(buffer)

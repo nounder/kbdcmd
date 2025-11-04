@@ -1,4 +1,5 @@
 import ArgumentParser
+import Core
 
 struct CycleCommand: ParsableCommand {
   static let configuration = CommandConfiguration(

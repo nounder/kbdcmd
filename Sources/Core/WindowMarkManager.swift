@@ -4,8 +4,8 @@ import CoreGraphics
 import Foundation
 import SwiftUI
 
-class WindowMarkManager: ObservableObject {
-  static let shared = WindowMarkManager()
+public class WindowMarkManager: ObservableObject {
+  public static let shared = WindowMarkManager()
   private let marksFilePath = "/tmp/kbdcmd-marks.json"
   @Published private var marks: [CGWindowID: String] = [:]
 
@@ -13,7 +13,7 @@ class WindowMarkManager: ObservableObject {
     loadMarks()
   }
 
-  func markWindow() {
+  public func markWindow() {
     guard let targetWindow = self.getForegroundWindow() else {
       print("No foreground window found")
       return
@@ -46,7 +46,7 @@ class WindowMarkManager: ObservableObject {
     app.setActivationPolicy(.regular)
   }
 
-  func focusMarkedWindow(mark: String) {
+  public func focusMarkedWindow(mark: String) {
     guard let windowID = marks.first(where: { $0.value == mark })?.key else {
       print("No window marked with '\(mark)'")
       return

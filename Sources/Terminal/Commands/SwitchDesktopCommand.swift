@@ -1,4 +1,5 @@
 import ArgumentParser
+import Core
 
 struct SwitchDesktopCommand: ParsableCommand {
   static let configuration = CommandConfiguration(

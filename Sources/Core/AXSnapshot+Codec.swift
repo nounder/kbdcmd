@@ -10,7 +10,7 @@ extension AXSnapshotNode {
     case position, size, zIndex
   }
 
-  func encode(to encoder: Encoder) throws {
+  public func encode(to encoder: Encoder) throws {
     var container = encoder.container(keyedBy: CodingKeys.self)
     try container.encode(id, forKey: .id)
 
@@ -50,7 +50,7 @@ extension AXSnapshotNode {
     try container.encodeIfPresent(zIndex, forKey: .zIndex)
   }
 
-  convenience init(from decoder: Decoder) throws {
+  public convenience init(from decoder: Decoder) throws {
     let container = try decoder.container(keyedBy: CodingKeys.self)
     let id = try container.decode(String.self, forKey: .id)
     let children = try container.decode([AXSnapshotNode].self, forKey: .children)
@@ -99,7 +99,7 @@ extension AXSnapshotValue {
     case type, value
   }
 
-  func encode(to encoder: Encoder) throws {
+  public func encode(to encoder: Encoder) throws {
     var container = encoder.container(keyedBy: CodingKeys.self)
 
     switch self {
@@ -164,7 +164,7 @@ extension AXSnapshotValue {
     }
   }
 
-  init(from decoder: Decoder) throws {
+  public init(from decoder: Decoder) throws {
     let container = try decoder.container(keyedBy: CodingKeys.self)
     let type = try container.decode(String.self, forKey: .type)
 

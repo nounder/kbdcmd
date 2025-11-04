@@ -2,8 +2,8 @@ import ApplicationServices
 import Cocoa
 
 /// Manages smooth scrolling functionality using CGEvent scroll wheel simulation
-class Scrolling {
-  static let shared = Scrolling()
+public class Scrolling {
+  public static let shared = Scrolling()
 
   private init() {}
 
@@ -83,7 +83,7 @@ class Scrolling {
   ///   - amount: Total pixels to scroll. Positive scrolls up, negative scrolls down
   ///   - duration: Base animation time hint used to calibrate scrolling speed
   ///   - preferredFPS: Target frames per second for the animation loop
-  func smoothScroll(_ amount: Int, duration: TimeInterval = 0.20, preferredFPS: Int = 120) {
+  public func smoothScroll(_ amount: Int, duration: TimeInterval = 0.20, preferredFPS: Int = 120) {
     guard amount != 0 else { return }
 
     let safeDuration = max(duration, 0.01)

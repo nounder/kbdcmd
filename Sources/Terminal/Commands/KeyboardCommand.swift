@@ -4,6 +4,7 @@ import Cocoa
 import Foundation
 import IOKit.hid
 import InputMethodKit
+import Core
 
 struct KeyboardCommand: ParsableCommand {
     static let configuration = CommandConfiguration(

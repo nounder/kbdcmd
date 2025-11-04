@@ -1,4 +1,5 @@
 import ArgumentParser
+import Core
 
 struct MarkWindowCommand: ParsableCommand {
   static let configuration = CommandConfiguration(

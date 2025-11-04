@@ -1,7 +1,7 @@
 import Carbon
 import Cocoa
 
-extension CGEventFlags {
+public extension CGEventFlags {
   static var maskShiftLeft: CGEventFlags {
     return CGEventFlags(rawValue: 0x0000_0002)
   }
@@ -32,9 +32,5 @@ extension CGEventFlags {
 
   static var maskOptionRight: CGEventFlags {
     return CGEventFlags(rawValue: 0x0000_0040)
-  }
-
-  static var maskAlphaShift: CGEventFlags {
-    return CGEventFlags(rawValue: 0x0001_0000)  // CapsLock
   }
 }

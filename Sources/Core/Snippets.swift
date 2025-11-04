@@ -1,7 +1,7 @@
 import ApplicationServices
 import Cocoa
 
-final class Snippets {
+public final class Snippets {
   private static let backspaceKeyCode: CGKeyCode = 51  // Backspace
   private static let nonCharacterModifierMask: UInt64 = {
     CGEventFlags.maskControlLeft.rawValue | CGEventFlags.maskControlRight.rawValue
@@ -32,7 +32,7 @@ final class Snippets {
     return count
   }
 
-  static func expandSnippet(for sequence: [KeyPress], insert text: String) {
+  public static func expandSnippet(for sequence: [KeyPress], insert text: String) {
     let toDelete = typedCharacterCount(in: sequence)
     deleteCharacters(count: toDelete)
     for ch in text {
