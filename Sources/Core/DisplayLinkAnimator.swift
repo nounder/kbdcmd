@@ -3,6 +3,11 @@ import Darwin
 import Foundation
 
 /// Provides display-link driven animations similar to requestAnimationFrame on the web.
+///
+/// Note: This class uses CVDisplayLink which was deprecated in macOS 15.
+/// The new recommended APIs (NSView/NSWindow/NSScreen.displayLink) require a different
+/// architecture with view/window references. CVDisplayLink continues to work correctly
+/// and this can be refactored later if needed.
 final class DisplayLinkAnimator {
   static let shared = DisplayLinkAnimator()
 
@@ -90,7 +95,7 @@ final class DisplayLinkAnimator {
       )
 
       state = .timed(animation)
-      CVDisplayLinkStart(link)
+      CVDisplayLinkStart(link)  // Deprecated in macOS 15 - still functional
     }
   }
 
@@ -108,9 +113,9 @@ final class DisplayLinkAnimator {
       if case .loop(let loop)? = state {
         loop.frameHandler = frame
         loop.preferredFrameInterval = interval
-        if !CVDisplayLinkIsRunning(link) {
+        if !CVDisplayLinkIsRunning(link) {  // Deprecated in macOS 15 - still functional
           loop.lastFrameTime = nil
-          CVDisplayLinkStart(link)
+          CVDisplayLinkStart(link)  // Deprecated in macOS 15 - still functional
         }
         return
       }
@@ -119,7 +124,7 @@ final class DisplayLinkAnimator {
 
       let loop = LoopAnimation(preferredFrameInterval: interval, frameHandler: frame)
       state = .loop(loop)
-      CVDisplayLinkStart(link)
+      CVDisplayLinkStart(link)  // Deprecated in macOS 15 - still functional
     }
   }
 
@@ -131,8 +136,8 @@ final class DisplayLinkAnimator {
   }
 
   private func stopLocked() {
-    if let link = displayLink, CVDisplayLinkIsRunning(link) {
-      CVDisplayLinkStop(link)
+    if let link = displayLink, CVDisplayLinkIsRunning(link) {  // Deprecated in macOS 15 - still functional
+      CVDisplayLinkStop(link)  // Deprecated in macOS 15 - still functional
     }
     state = nil
   }
@@ -145,6 +150,7 @@ final class DisplayLinkAnimator {
 
   private func setupDisplayLink() {
     var link: CVDisplayLink?
+    // Deprecated in macOS 15 - still functional, refactor to NSScreen.displayLink in future
     guard CVDisplayLinkCreateWithActiveCGDisplays(&link) == kCVReturnSuccess,
       let displayLink = link
     else {
@@ -173,7 +179,7 @@ final class DisplayLinkAnimator {
       return animator.handleDisplayLink(timestamp: inOutputTime.pointee)
     }
 
-    CVDisplayLinkSetOutputCallback(
+    CVDisplayLinkSetOutputCallback(  // Deprecated in macOS 15 - still functional
       displayLink,
       callback,
       UnsafeMutableRawPointer(Unmanaged.passUnretained(self).toOpaque()))
@@ -226,7 +232,7 @@ final class DisplayLinkAnimator {
         if timedProgress >= 1.0 {
           timedCompletion = animation.completionHandler
           state = nil
-          CVDisplayLinkStop(link)
+          CVDisplayLinkStop(link)  // Deprecated in macOS 15 - still functional
         }
 
       case .loop(let loop):

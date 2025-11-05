@@ -74,7 +74,7 @@ public class WindowSwitcherOverlay: NSObject {
     guard let axWindow = windowInfo.axWindow else { return }
 
     let app = NSRunningApplication(processIdentifier: windowInfo.pid)
-    app?.activate(options: .activateIgnoringOtherApps)
+    app?.activate()
 
     if windowInfo.isMinimized {
       axWindow.set(Ax.minimizedAttr, false)
@@ -89,7 +89,7 @@ public class WindowSwitcherOverlay: NSObject {
 
   static func focusApp(pid: pid_t) {
     let app = NSRunningApplication(processIdentifier: pid)
-    app?.activate(options: .activateIgnoringOtherApps)
+    app?.activate()
 
     DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
       WindowSwitcherOverlay.shared.hide()

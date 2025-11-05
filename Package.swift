@@ -5,7 +5,7 @@ import PackageDescription
 
 let package = Package(
   name: "kbdcmd",
-  platforms: [.macOS(.v12)],
+  platforms: [.macOS("15.0")],
   products: [
     .library(name: "Core", targets: ["Core"]),
     .executable(name: "kbdcmd", targets: ["Terminal"]),

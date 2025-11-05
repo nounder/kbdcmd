@@ -251,7 +251,7 @@ public class WindowManager {
 
     // Activate the app
     debugLog("Activating app")
-    app.activate(options: .activateIgnoringOtherApps)
+    app.activate()
 
     debugLog("Window activation successful")
     return true

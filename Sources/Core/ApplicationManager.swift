@@ -83,7 +83,7 @@ public struct ApplicationManager {
           let hasNonMinimizedWindow = axWindows.contains { $0.get(Ax.minimizedAttr) != true }
 
           if !hasNonMinimizedWindow {
-            runningApp.activate(options: .activateIgnoringOtherApps)
+            runningApp.activate()
 
             if WindowManager.main.createNewWindowViaMenu(for: axApp) {
               return .opened
@@ -113,11 +113,11 @@ public struct ApplicationManager {
         }
       } else {
         // If we can't get windows info, just activate the app
-        runningApp.activate(options: .activateIgnoringOtherApps)
+        runningApp.activate()
         return .focused
       }
 
-      runningApp.activate(options: .activateIgnoringOtherApps)
+      runningApp.activate()
       return .focused
     }
 
