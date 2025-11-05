@@ -12,13 +12,11 @@ public class Scrolling {
     var delivered: Double = 0
     var pending: Double = 0
     var velocity: Double = 0
-    var preferredFPS: Int
     var baseSpeed: Double
     var maxVelocity: Double
     var stopDeceleration: Double
 
-    init(preferredFPS: Int, baseSpeed: Double) {
-      self.preferredFPS = preferredFPS
+    init(baseSpeed: Double) {
       self.baseSpeed = 0
       self.maxVelocity = 720
       self.stopDeceleration = self.maxVelocity / 0.12
@@ -41,8 +39,8 @@ public class Scrolling {
   }
 
   private var animationState: ScrollAnimationState?
-  private lazy var loopHandler: (Double, Double) -> Void = { [weak self] timestamp, delta in
-    self?.handleLoopFrame(timestamp: timestamp, delta: delta)
+  private lazy var loopHandler: (CFTimeInterval, CFTimeInterval) -> Void = { [weak self] _, delta in
+    self?.handleLoopFrame(delta: delta)
   }
 
   /// Scrolls by the specified number of units
@@ -82,17 +80,16 @@ public class Scrolling {
   /// - Parameters:
   ///   - amount: Total pixels to scroll. Positive scrolls up, negative scrolls down
   ///   - duration: Base animation time hint used to calibrate scrolling speed
-  ///   - preferredFPS: Target frames per second for the animation loop
-  public func smoothScroll(_ amount: Int, duration: TimeInterval = 0.20, preferredFPS: Int = 120) {
+  public func smoothScroll(_ amount: Int, duration: TimeInterval = 0.20) {
     guard amount != 0 else { return }
 
     let safeDuration = max(duration, 0.01)
     DispatchQueue.main.async {
-      self.enqueueScroll(amount: amount, duration: safeDuration, preferredFPS: preferredFPS)
+      self.enqueueScroll(amount: amount, duration: safeDuration)
     }
   }
 
-  private func enqueueScroll(amount: Int, duration: TimeInterval, preferredFPS: Int) {
+  private func enqueueScroll(amount: Int, duration: TimeInterval) {
     let magnitude = Double(abs(amount))
     let speedHint = magnitude / duration
     let amountDouble = Double(amount)
@@ -113,20 +110,19 @@ public class Scrolling {
       }
 
       state.updateDynamics(with: speedHint)
-      state.preferredFPS = max(state.preferredFPS, preferredFPS)
 
-      DisplayLinkAnimator.shared.startLoop(preferredFPS: state.preferredFPS, frame: loopHandler)
+      DisplayLinkAnimator.shared.startLoop(frame: loopHandler)
       return
     }
 
-    let state = ScrollAnimationState(preferredFPS: preferredFPS, baseSpeed: speedHint)
+    let state = ScrollAnimationState(baseSpeed: speedHint)
     state.target = Double(amount)
     animationState = state
 
-    DisplayLinkAnimator.shared.startLoop(preferredFPS: preferredFPS, frame: loopHandler)
+    DisplayLinkAnimator.shared.startLoop(frame: loopHandler)
   }
 
-  private func handleLoopFrame(timestamp _: Double, delta: Double) {
+  private func handleLoopFrame(delta: Double) {
     guard let state = animationState else {
       DisplayLinkAnimator.shared.stop()
       return
