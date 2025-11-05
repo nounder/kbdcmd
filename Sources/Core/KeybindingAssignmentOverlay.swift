@@ -7,7 +7,14 @@ public class KeybindingAssignmentOverlay: NSObject {
   private var window: NSWindow?
   private var hostingView: NSHostingView<KeybindingAssignmentView>?
   private var currentAppPath: String?
+  private var currentWindowId: CGWindowID?
+  private var assignmentMode: AssignmentMode = .app
   private var pressedKeyState: String = ""
+
+  enum AssignmentMode {
+    case app
+    case window
+  }
 
   public var isVisible: Bool {
     return window != nil
@@ -19,6 +26,8 @@ public class KeybindingAssignmentOverlay: NSObject {
 
   public func show(for appPath: String) {
     self.currentAppPath = appPath
+    self.currentWindowId = nil
+    self.assignmentMode = .app
     self.pressedKeyState = ""
 
     // Cancel any pending window switcher overlay timer
@@ -27,7 +36,52 @@ public class KeybindingAssignmentOverlay: NSObject {
     WindowSwitcherOverlay.shared.hide()
 
     let appName = (appPath as NSString).lastPathComponent.replacingOccurrences(of: ".app", with: "")
-    let contentView = KeybindingAssignmentView(appName: appName, pressedKey: pressedKeyState)
+    let contentView = KeybindingAssignmentView(
+      targetName: appName,
+      pressedKey: pressedKeyState,
+      isWindowMode: false
+    )
+    let hostingView = NSHostingView(rootView: contentView)
+
+    guard let screen = NSScreen.main else { return }
+    let screenFrame = screen.frame
+
+    let window = NSWindow(
+      contentRect: screenFrame,
+      styleMask: [.borderless],
+      backing: .buffered,
+      defer: false
+    )
+
+    window.contentView = hostingView
+    window.backgroundColor = .clear
+    window.isOpaque = false
+    window.level = .floating
+    window.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle]
+    window.ignoresMouseEvents = false
+    window.orderFrontRegardless()
+    window.makeKey()
+
+    self.window = window
+    self.hostingView = hostingView
+  }
+
+  public func show(forWindow windowId: CGWindowID, windowTitle: String) {
+    self.currentWindowId = windowId
+    self.currentAppPath = nil
+    self.assignmentMode = .window
+    self.pressedKeyState = ""
+
+    // Cancel any pending window switcher overlay timer
+    KeyListener.shared.cancelOverlayShow()
+    // Hide window switcher if it's already showing
+    WindowSwitcherOverlay.shared.hide()
+
+    let contentView = KeybindingAssignmentView(
+      targetName: windowTitle,
+      pressedKey: pressedKeyState,
+      isWindowMode: true
+    )
     let hostingView = NSHostingView(rootView: contentView)
 
     guard let screen = NSScreen.main else { return }
@@ -88,8 +142,24 @@ public class KeybindingAssignmentOverlay: NSObject {
   
   private func updateView() {
     guard let hostingView = hostingView else { return }
-    let appName = (currentAppPath as? NSString)?.lastPathComponent.replacingOccurrences(of: ".app", with: "") ?? ""
-    let updatedView = KeybindingAssignmentView(appName: appName, pressedKey: pressedKeyState)
+    
+    let targetName: String
+    let isWindowMode: Bool
+    
+    switch assignmentMode {
+    case .app:
+      targetName = (currentAppPath as? NSString)?.lastPathComponent.replacingOccurrences(of: ".app", with: "") ?? ""
+      isWindowMode = false
+    case .window:
+      targetName = WindowManager.main.getWindowTitle(windowId: currentWindowId ?? 0) ?? "Window"
+      isWindowMode = true
+    }
+    
+    let updatedView = KeybindingAssignmentView(
+      targetName: targetName,
+      pressedKey: pressedKeyState,
+      isWindowMode: isWindowMode
+    )
     hostingView.rootView = updatedView
   }
 
@@ -98,20 +168,29 @@ public class KeybindingAssignmentOverlay: NSObject {
     window = nil
     hostingView = nil
     currentAppPath = nil
+    currentWindowId = nil
+    assignmentMode = .app
     pressedKeyState = ""
   }
 
   private func handleLetterInput(_ letter: Character) {
-    guard let appPath = currentAppPath else { return }
-    
-    Keybindings.shared.assignAppKeybinding(letter: letter, appPath: appPath)
+    switch assignmentMode {
+    case .app:
+      guard let appPath = currentAppPath else { return }
+      Keybindings.shared.assignAppKeybinding(letter: letter, appPath: appPath)
+    case .window:
+      guard let windowId = currentWindowId else { return }
+      // Always include minimized windows for window keybindings
+      Keybindings.shared.assignWindowKeybinding(letter: letter, windowId: windowId, includeMinimized: true)
+    }
     hide()
   }
 }
 
 struct KeybindingAssignmentView: View {
-  let appName: String
+  let targetName: String
   let pressedKey: String
+  let isWindowMode: Bool
 
   var body: some View {
     ZStack {
@@ -126,9 +205,22 @@ struct KeybindingAssignmentView: View {
           .fontWeight(.bold)
           .foregroundColor(.white)
 
-        Text("Press a letter key for \(appName)")
-          .font(.body)
-          .foregroundColor(.white.opacity(0.8))
+        if isWindowMode {
+          Text("Press a letter key for window:")
+            .font(.body)
+            .foregroundColor(.white.opacity(0.8))
+
+          Text("\(targetName)")
+            .font(.body)
+            .fontWeight(.semibold)
+            .foregroundColor(.cyan)
+            .lineLimit(2)
+            .multilineTextAlignment(.center)
+        } else {
+          Text("Press a letter key for \(targetName)")
+            .font(.body)
+            .foregroundColor(.white.opacity(0.8))
+        }
 
         if !pressedKey.isEmpty {
           Text("⌘ + \(pressedKey.uppercased())")
@@ -146,7 +238,7 @@ struct KeybindingAssignmentView: View {
           .fill(Color.black.opacity(0.9))
           .shadow(color: .black.opacity(0.5), radius: 30)
       )
-      .frame(width: 400, height: 200)
+      .frame(width: 400, height: 240)
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity)
   }

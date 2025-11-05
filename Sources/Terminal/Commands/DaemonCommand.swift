@@ -26,6 +26,14 @@ struct DaemonCommand: ParsableCommand {
       }
     }
 
+    // Right Command + Shift + ` to assign keybinding for frontmost window
+    kb.register([KeyPress(key: .character("`"), flags: [.maskCmdRight, .maskShift])]) { _ in
+      if let windowId = WindowManager.main.getFrontmostWindow() {
+        let windowTitle = WindowManager.main.getWindowTitle(windowId: windowId) ?? "Window"
+        KeybindingAssignmentOverlay.shared.show(forWindow: windowId, windowTitle: windowTitle)
+      }
+    }
+
     kb.register([KeyPress(key: .character("O"), flags: .maskAlphaShift)]) { _ in
       HintOverlay.shared.show()
     }

@@ -300,6 +300,11 @@ struct WindowSwitcherView: View {
         }
 
         Spacer()
+
+        // Show keybinding if this window has one
+        if let keybinding = Keybindings.shared.getKeybindingForWindow(window.windowNumber) {
+          KeyboardKeyView(letter: String(keybinding))
+        }
       }
       .padding(.vertical, 6)
       .padding(.horizontal, 8)

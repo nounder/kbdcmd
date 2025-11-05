@@ -181,4 +181,119 @@ public class WindowManager {
     }
     return key
   }
+
+  public func activateWindow(windowId: CGWindowID, includeMinimized: Bool = false) -> Bool {
+    debugLog("Activating window \(windowId), includeMinimized: \(includeMinimized)")
+    
+    // Get all windows from all apps
+    let windowsInfo = CGWindowListCopyWindowInfo(
+      [.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID)
+
+    // Find the window and get its pid
+    guard let windowList = windowsInfo as? [[String: Any]],
+      let windowDict = windowList.first(where: {
+        ($0[kCGWindowNumber as String] as? CGWindowID) == windowId
+      }),
+      let pid = windowDict[kCGWindowOwnerPID as String] as? pid_t,
+      let app = NSRunningApplication(processIdentifier: pid)
+    else {
+      debugLog("Failed to find window \(windowId) in window list")
+      return false
+    }
+
+    debugLog("Found window, pid: \(pid)")
+
+    // Get AX element for the app
+    let axApp = AXUIElementCreateApplication(pid)
+
+    // Get all windows
+    var axValue: AnyObject?
+    guard AXUIElementCopyAttributeValue(axApp, kAXWindowsAttribute as CFString, &axValue)
+      == .success,
+      let axWindows = axValue as? [AXUIElement]
+    else {
+      debugLog("Failed to get AX windows for pid \(pid)")
+      return false
+    }
+
+    debugLog("Got \(axWindows.count) AX windows")
+
+    // Find the specific window by CGWindowID
+    guard let targetWindow = axWindows.first(where: {
+      $0.containingWindowId() == windowId
+    }) else {
+      debugLog("Failed to find window \(windowId) in AX windows")
+      return false
+    }
+
+    // Check if window is minimized
+    let isMinimized = targetWindow.get(Ax.minimizedAttr) == true
+    debugLog("Window isMinimized: \(isMinimized)")
+
+    // If includeMinimized is false and window is minimized, don't activate
+    if !includeMinimized && isMinimized {
+      debugLog("Skipping minimized window (includeMinimized=false)")
+      return false
+    }
+
+    // De-minimize if needed (only if includeMinimized is true)
+    if isMinimized && includeMinimized {
+      debugLog("De-minimizing window")
+      targetWindow.set(Ax.minimizedAttr, false)
+    }
+
+    // Raise window to front
+    debugLog("Raising window to front")
+    _ = targetWindow.raise()
+
+    // Activate the app
+    debugLog("Activating app")
+    app.activate(options: .activateIgnoringOtherApps)
+
+    debugLog("Window activation successful")
+    return true
+  }
+
+  public func getFrontmostWindow() -> CGWindowID? {
+    guard let frontmostApp = getFrontmostApplication() else {
+      return nil
+    }
+
+    let axApp = AXUIElementCreateApplication(frontmostApp.processIdentifier)
+
+    guard let focusedWindow = axApp.get(Ax.focusedWindowAttr),
+      let windowId = focusedWindow.containingWindowId()
+    else {
+      return nil
+    }
+
+    return windowId
+  }
+
+  public func getWindowTitle(windowId: CGWindowID) -> String? {
+    let windowsInfo = CGWindowListCopyWindowInfo(
+      [.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID)
+
+    guard let windowList = windowsInfo as? [[String: Any]],
+      let windowDict = windowList.first(where: {
+        ($0[kCGWindowNumber as String] as? CGWindowID) == windowId
+      }),
+      let pid = windowDict[kCGWindowOwnerPID as String] as? pid_t
+    else {
+      return nil
+    }
+
+    let axApp = AXUIElementCreateApplication(pid)
+
+    var axValue: AnyObject?
+    guard AXUIElementCopyAttributeValue(axApp, kAXWindowsAttribute as CFString, &axValue)
+      == .success,
+      let axWindows = axValue as? [AXUIElement],
+      let targetWindow = axWindows.first(where: { $0.containingWindowId() == windowId })
+    else {
+      return nil
+    }
+
+    return targetWindow.get(Ax.titleAttr) ?? "Untitled"
+  }
 }
