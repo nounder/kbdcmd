@@ -1,23 +1,13 @@
 import Cocoa
 import SwiftUI
 
+/// Public interface for the keybinding assignment overlay
+/// Delegates to OverlayManager for actual implementation
 public class KeybindingAssignmentOverlay: NSObject {
   public static let shared = KeybindingAssignmentOverlay()
 
-  private var window: NSWindow?
-  private var hostingView: NSHostingView<KeybindingAssignmentView>?
-  private var currentAppPath: String?
-  private var currentWindowId: CGWindowID?
-  private var assignmentMode: AssignmentMode = .app
-  private var pressedKeyState: String = ""
-
-  enum AssignmentMode {
-    case app
-    case window
-  }
-
   public var isVisible: Bool {
-    return window != nil
+    return OverlayManager.shared.isAnyOverlayVisible
   }
 
   private override init() {
@@ -25,182 +15,36 @@ public class KeybindingAssignmentOverlay: NSObject {
   }
 
   public func show(for appPath: String) {
-    self.currentAppPath = appPath
-    self.currentWindowId = nil
-    self.assignmentMode = .app
-    self.pressedKeyState = ""
-
-    // Cancel any pending window switcher overlay timer
-    KeyListener.shared.cancelOverlayShow()
-    // Hide window switcher if it's already showing
-    WindowSwitcherOverlay.shared.hide()
-
-    let appName = (appPath as NSString).lastPathComponent.replacingOccurrences(of: ".app", with: "")
-    let contentView = KeybindingAssignmentView(
-      targetName: appName,
-      pressedKey: pressedKeyState,
-      isWindowMode: false
-    )
-    let hostingView = NSHostingView(rootView: contentView)
-
-    guard let screen = NSScreen.main else { return }
-    let screenFrame = screen.frame
-
-    let window = NSWindow(
-      contentRect: screenFrame,
-      styleMask: [.borderless],
-      backing: .buffered,
-      defer: false
-    )
-
-    window.contentView = hostingView
-    window.backgroundColor = .clear
-    window.isOpaque = false
-    window.level = .floating
-    window.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle]
-    window.ignoresMouseEvents = false
-    window.orderFrontRegardless()
-    window.makeKey()
-
-    self.window = window
-    self.hostingView = hostingView
+    OverlayManager.shared.showKeybindingAssignmentOverlay(for: appPath)
   }
 
   public func show(forWindow windowId: CGWindowID, windowTitle: String) {
-    self.currentWindowId = windowId
-    self.currentAppPath = nil
-    self.assignmentMode = .window
-    self.pressedKeyState = ""
-
-    // Cancel any pending window switcher overlay timer
-    KeyListener.shared.cancelOverlayShow()
-    // Hide window switcher if it's already showing
-    WindowSwitcherOverlay.shared.hide()
-
-    let contentView = KeybindingAssignmentView(
-      targetName: windowTitle,
-      pressedKey: pressedKeyState,
-      isWindowMode: true
-    )
-    let hostingView = NSHostingView(rootView: contentView)
-
-    guard let screen = NSScreen.main else { return }
-    let screenFrame = screen.frame
-
-    let window = NSWindow(
-      contentRect: screenFrame,
-      styleMask: [.borderless],
-      backing: .buffered,
-      defer: false
-    )
-
-    window.contentView = hostingView
-    window.backgroundColor = .clear
-    window.isOpaque = false
-    window.level = .floating
-    window.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle]
-    window.ignoresMouseEvents = false
-    window.orderFrontRegardless()
-    window.makeKey()
-
-    self.window = window
-    self.hostingView = hostingView
-  }
-
-  // Called from KeyListener when a key is pressed and overlay is visible
-  public func handleKeyPress(keyCode: Int64, characters: String?) -> Bool {
-    // ESC to cancel
-    if keyCode == Key.Named.escape.rawValue {
-      hide()
-      return true
-    }
-
-    // Get character
-    guard let characters = characters,
-      let char = characters.first,
-      char.isLetter || char.isNumber
-    else {
-      return false
-    }
-
-    // Update the view to show pressed key
-    pressedKeyState = String(char)
-    updateView()
-
-    // Delay slightly to show the pressed key before closing
-    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
-      self?.handleCharacterInput(char)
-    }
-
-    return true
-  }
-
-  // Called when user clicks anywhere on the overlay
-  public func handleMouseClick() -> Bool {
-    hide()
-    return true
-  }
-
-  private func updateView() {
-    guard let hostingView = hostingView else { return }
-
-    let targetName: String
-    let isWindowMode: Bool
-
-    switch assignmentMode {
-    case .app:
-      targetName =
-        (currentAppPath as? NSString)?.lastPathComponent.replacingOccurrences(of: ".app", with: "")
-        ?? ""
-      isWindowMode = false
-    case .window:
-      targetName = WindowManager.main.getWindowTitle(windowId: currentWindowId ?? 0) ?? "Window"
-      isWindowMode = true
-    }
-
-    let updatedView = KeybindingAssignmentView(
-      targetName: targetName,
-      pressedKey: pressedKeyState,
-      isWindowMode: isWindowMode
-    )
-    hostingView.rootView = updatedView
+    OverlayManager.shared.showKeybindingAssignmentOverlay(
+      forWindow: windowId, windowTitle: windowTitle)
   }
 
   public func hide() {
-    window?.orderOut(nil)
-    window = nil
-    hostingView = nil
-    currentAppPath = nil
-    currentWindowId = nil
-    assignmentMode = .app
-    pressedKeyState = ""
-  }
-
-  private func handleCharacterInput(_ character: Character) {
-    switch assignmentMode {
-    case .app:
-      guard let appPath = currentAppPath else { return }
-      Keybindings.shared.assignAppKeybinding(character: character, appPath: appPath)
-    case .window:
-      guard let windowId = currentWindowId else { return }
-      // Always include minimized windows for window keybindings
-      Keybindings.shared.assignWindowKeybinding(
-        character: character, windowId: windowId, includeMinimized: true)
-    }
-    hide()
+    OverlayManager.shared.hideActive()
   }
 }
 
 struct KeybindingAssignmentView: View {
   let targetName: String
-  let pressedKey: String
   let isWindowMode: Bool
+  let onKeyPress: (Character) -> Void
+  let onDismiss: () -> Void
+
+  @State private var pressedKey: String = ""
 
   var body: some View {
     ZStack {
       // Full screen transparent background to capture clicks
       Color.black.opacity(0.6)
         .ignoresSafeArea()
+        .contentShape(Rectangle())
+        .onTapGesture {
+          onDismiss()
+        }
 
       // Centered dialog
       VStack(spacing: 24) {
@@ -245,5 +89,29 @@ struct KeybindingAssignmentView: View {
       .frame(width: 400, height: 240)
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity)
+    .onAppear {
+      // Monitor keyboard events for character input
+      NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [self] event in
+        self.handleKeyEvent(event)
+        return nil  // Consume the event
+      }
+    }
+  }
+
+  private func handleKeyEvent(_ event: NSEvent) {
+    guard let characters = event.characters,
+      let char = characters.first,
+      char.isLetter || char.isNumber
+    else {
+      return
+    }
+
+    // Update UI to show pressed key
+    pressedKey = String(char)
+
+    // Delay slightly to show feedback before closing
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+      onKeyPress(char)
+    }
   }
 }

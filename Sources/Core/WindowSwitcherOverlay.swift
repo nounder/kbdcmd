@@ -2,112 +2,11 @@ import Cocoa
 import Combine
 import SwiftUI
 
-public class WindowSwitcherOverlay: NSObject {
-  public static let shared = WindowSwitcherOverlay()
-
-  private var window: NSWindow?
-  private var hostingView: NSHostingView<WindowSwitcherView>?
-  private let windowChangePublisher = WindowChangePublisher()
-
-  public var isVisible: Bool {
-    return window != nil
-  }
-
-  private override init() {
-    super.init()
-  }
-
-  public func show() {
-    guard window == nil else {
-      window?.orderFrontRegardless()
-      return
-    }
-
-    let contentView = WindowSwitcherView(publisher: windowChangePublisher)
-    let hostingView = NSHostingView(rootView: contentView)
-
-    guard let screen = NSScreen.main else { return }
-    let screenFrame = screen.visibleFrame
-
-    let windowWidth: CGFloat = 400
-    let windowHeight = screenFrame.height
-    let windowX = screenFrame.maxX - windowWidth
-    let windowY = screenFrame.minY
-
-    let window = NSWindow(
-      contentRect: NSRect(x: windowX, y: windowY, width: windowWidth, height: windowHeight),
-      styleMask: [.borderless, .nonactivatingPanel],
-      backing: .buffered,
-      defer: false
-    )
-
-    window.contentView = hostingView
-    window.backgroundColor = .clear
-    window.isOpaque = false
-    window.level = .floating
-    window.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle]
-    window.ignoresMouseEvents = false
-    window.orderFrontRegardless()
-
-    self.window = window
-    self.hostingView = hostingView
-
-    startObservingWindowChanges()
-  }
-
-  public func hide() {
-    stopObservingWindowChanges()
-    window?.orderOut(nil)
-    window = nil
-    hostingView = nil
-  }
-
-  private func startObservingWindowChanges() {
-    windowChangePublisher.startMonitoring()
-  }
-
-  private func stopObservingWindowChanges() {
-    windowChangePublisher.stopMonitoring()
-  }
-
-  static func focusWindow(_ windowInfo: WindowInfo) {
-    guard let axWindow = windowInfo.axWindow else { return }
-
-    let app = NSRunningApplication(processIdentifier: windowInfo.pid)
-    app?.activate()
-
-    if windowInfo.isMinimized {
-      axWindow.set(Ax.minimizedAttr, false)
-    }
-
-    _ = axWindow.raise()
-
-    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-      WindowSwitcherOverlay.shared.hide()
-    }
-  }
-
-  static func focusApp(pid: pid_t) {
-    let app = NSRunningApplication(processIdentifier: pid)
-    app?.activate()
-
-    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-      WindowSwitcherOverlay.shared.hide()
-    }
-  }
-
-  public static func getFrontmostAppPath() -> String? {
-    guard let frontmostApp = NSWorkspace.shared.frontmostApplication,
-      let bundleURL = frontmostApp.bundleURL
-    else {
-      return nil
-    }
-    return bundleURL.path
-  }
-}
+// MARK: - Window Switcher View and Components
 
 struct WindowSwitcherView: View {
   @ObservedObject var publisher: WindowChangePublisher
+  let onDismiss: () -> Void
   @State private var hoveredAppName: String?
   @State private var hoveredWindowId: CGWindowID?
 
@@ -193,12 +92,12 @@ struct WindowSwitcherView: View {
     VStack(alignment: .leading, spacing: 8) {
       Button(action: {
         if let group = appEntry.group {
-          WindowSwitcherOverlay.focusApp(pid: group.pid)
+          WindowManager.main.focusApp(pid: group.pid)
         } else {
           // App is not running, try to open it
           _ = try? ApplicationManager.openOrFocus(appEntry.appPath)
           DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-            WindowSwitcherOverlay.shared.hide()
+            OverlayManager.shared.hideActive()
           }
         }
       }) {
@@ -248,7 +147,7 @@ struct WindowSwitcherView: View {
   private func runningAppView(for group: AppWindowGroup) -> some View {
     VStack(alignment: .leading, spacing: 8) {
       Button(action: {
-        WindowSwitcherOverlay.focusApp(pid: group.pid)
+        WindowManager.main.focusApp(pid: group.pid)
       }) {
         HStack(spacing: 8) {
           if let icon = group.appIcon {
@@ -285,7 +184,7 @@ struct WindowSwitcherView: View {
 
   private func windowView(for window: WindowInfo) -> some View {
     Button(action: {
-      WindowSwitcherOverlay.focusWindow(window)
+      WindowManager.main.focusWindow(window)
     }) {
       HStack(spacing: 8) {
         Circle()

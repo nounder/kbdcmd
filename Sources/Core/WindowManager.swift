@@ -300,4 +300,46 @@ public class WindowManager {
 
     return targetWindow.get(Ax.titleAttr) ?? "Untitled"
   }
+
+  /// Gets the path to the frontmost application
+  public func getFrontmostAppPath() -> String? {
+    guard let frontmostApp = NSWorkspace.shared.frontmostApplication,
+      let bundleURL = frontmostApp.bundleURL
+    else {
+      return nil
+    }
+    return bundleURL.path
+  }
+
+  /// Focuses a window and optionally hides the active overlay
+  func focusWindow(_ windowInfo: WindowInfo, hideOverlay: Bool = true) {
+    guard let axWindow = windowInfo.axWindow else { return }
+
+    let app = NSRunningApplication(processIdentifier: windowInfo.pid)
+    app?.activate()
+
+    if windowInfo.isMinimized {
+      axWindow.set(Ax.minimizedAttr, false)
+    }
+
+    _ = axWindow.raise()
+
+    if hideOverlay {
+      DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+        OverlayManager.shared.hideActive()
+      }
+    }
+  }
+
+  /// Focuses an application and optionally hides the active overlay
+  public func focusApp(pid: pid_t, hideOverlay: Bool = true) {
+    let app = NSRunningApplication(processIdentifier: pid)
+    app?.activate()
+
+    if hideOverlay {
+      DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+        OverlayManager.shared.hideActive()
+      }
+    }
+  }
 }

@@ -28,7 +28,7 @@ The project is organized into three main targets:
 1. **Core** (library) - Shared functionality
    - `Sources/Core/` - All shared code
    - KeyListener, Keybindings, WindowManager, ApplicationManager
-   - HintOverlay, WindowSwitcherOverlay, Snippets
+   - OverlayManager (centralized overlay management), Snippets
    - AXInterface, AXSnapshot (accessibility tree snapshots)
    - Extensions for CGEventFlags, AXUIElement, Array
 

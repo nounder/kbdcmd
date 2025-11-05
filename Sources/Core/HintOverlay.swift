@@ -1,293 +1,7 @@
 import Cocoa
 import SwiftUI
 
-// MARK: - Custom Window for Keyboard Input
-
-/// Custom NSWindow that captures keyboard events for the overlay
-class AccessibilityOverlayWindow: NSWindow {
-  var onKeyDown: ((NSEvent) -> Bool)?  // Returns true if event was handled
-
-  override func keyDown(with event: NSEvent) {
-    if let onKeyDown = onKeyDown, onKeyDown(event) {
-      return  // Event was handled
-    }
-    super.keyDown(with: event)
-  }
-
-  override var acceptsFirstResponder: Bool {
-    return true
-  }
-}
-
-// MARK: - Hint Overlay Manager
-
-/// Manages the UI overlay window and views for displaying clickable element hints
-/// Coordinates between AXInterface, keyboard input, and UI display
-public class HintOverlay {
-  public static let shared = HintOverlay()
-
-  private var window: NSWindow?
-  private var hintManager: HintManager?
-  private var onElementClick: ((ClickableElement) -> Void)?
-  private var onDismiss: (() -> Void)?
-
-  public var isVisible: Bool {
-    return window != nil
-  }
-
-  private init() {}
-
-  // MARK: - Public Interface
-
-  /// Shows the accessibility overlay with clickable elements
-  public func show() {
-    // If already visible, bring to front
-    guard !isVisible else {
-      bringToFront()
-      return
-    }
-
-    // Show loading indicator immediately for better UX (ensures main thread)
-    DispatchQueue.main.async { [weak self] in
-      guard let self = self else { return }
-      self.showLoading { [weak self] in
-        self?.hide()
-      }
-    }
-
-    // Collect clickable elements in background to avoid blocking UI
-    DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-      guard let self = self else { return }
-
-      // Collect elements on background thread
-      let elements = AXInterface.collectClickableElements()
-
-      // Update UI on main thread with proper state management
-      DispatchQueue.main.async {
-        // Double-check overlay is still visible (user might have dismissed during collection)
-        guard self.isVisible else {
-          return
-        }
-        self.updateOverlayWithElements(elements)
-      }
-    }
-  }
-
-  /// Hides and dismisses the overlay
-  public func hide() {
-    // Ensure UI updates happen on main thread
-    DispatchQueue.main.async { [weak self] in
-      guard let self = self else { return }
-      self.window?.orderOut(nil)
-      self.window = nil
-      self.hintManager = nil
-      self.onElementClick = nil
-      self.onDismiss = nil
-    }
-  }
-
-  /// Brings the overlay to front if it exists
-  func bringToFront() {
-    window?.orderFrontRegardless()
-  }
-
-  /// Handles keyboard events from CGEvent tap (called from KeyListener)
-  func handleKeyboardEvent(keyCode: Int64, characters: String?) -> Bool {
-    guard let manager = hintManager else { return false }
-
-    if keyCode == Key.Named.escape.rawValue {
-      manager.clearPrefix()
-      onDismiss?()
-      return true
-    }
-
-    if keyCode == Key.Named.delete.rawValue
-      || keyCode == Key.Named.forwardDelete.rawValue
-    {
-      manager.removeLastCharacter()
-      return true
-    }
-
-    // Check if it's a valid hint character
-    if let characters = characters?.lowercased(), let firstChar = characters.first,
-      HintManager.hintCharactersSet.contains(firstChar)
-    {
-      let accepted = manager.appendCharacter(firstChar)
-
-      if accepted {
-        // Check if exactly one match after updating prefix
-        let matchingElements = manager.getMatchingElements(for: manager.typedPrefix)
-
-        // Auto-click if exactly one match
-        if matchingElements.count == 1, let match = matchingElements.first {
-          // Use a small delay to allow visual feedback
-          DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
-            self?.onElementClick?(match.element)
-          }
-        }
-
-        return true
-      }
-    }
-
-    return false
-  }
-
-  // MARK: - Private Methods
-
-  /// Shows loading overlay on the screen containing the mouse cursor
-  /// Must be called on the main thread
-  private func showLoading(onDismiss: @escaping () -> Void) {
-    // Ensure we're on main thread for UI updates
-    guard Thread.isMainThread else {
-      DispatchQueue.main.async {
-        self.showLoading(onDismiss: onDismiss)
-      }
-      return
-    }
-
-    // Get mouse location to find which screen to show overlay on
-    let mouseLocation = NSEvent.mouseLocation
-    let targetScreen =
-      NSScreen.screens.first(where: { $0.frame.contains(mouseLocation) }) ?? NSScreen.main
-
-    guard let screen = targetScreen else {
-      debugLog("No screen found")
-      return
-    }
-
-    debugLog("Creating overlay on screen: \(screen.frame), mouse at: \(mouseLocation)")
-
-    let contentView = LoadingOverlayView(onDismiss: onDismiss)
-    let hostingView = NSHostingView(rootView: contentView)
-
-    // Create a borderless window covering the target screen
-    let window = AccessibilityOverlayWindow(
-      contentRect: screen.frame,
-      styleMask: [.borderless, .nonactivatingPanel],
-      backing: .buffered,
-      defer: false
-    )
-
-    window.contentView = hostingView
-    window.backgroundColor = .clear
-    window.isOpaque = false
-    window.level = .floating
-    window.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle]
-    window.ignoresMouseEvents = false  // Allow mouse events to pass through to SwiftUI
-    window.orderFrontRegardless()
-
-    self.window = window
-
-    debugLog("Window created at: \(window.frame)")
-  }
-
-  /// Updates the overlay UI with collected elements
-  /// This method is called on the main thread after elements are collected
-  private func updateOverlayWithElements(_ elements: [ClickableElement]) {
-    // Ensure we're still visible (user might have dismissed during collection)
-    guard isVisible else {
-      return
-    }
-
-    // Create hint manager
-    let manager = HintManager(elements: elements)
-    self.hintManager = manager
-
-    // Store callbacks
-    self.onElementClick = { [weak self] element in
-      self?.clickElement(element)
-    }
-    self.onDismiss = { [weak self] in
-      self?.hide()
-    }
-
-    // Update overlay with elements
-    update(
-      elements: elements,
-      hintManager: manager,
-      onElementClick: { [weak self] element in
-        self?.clickElement(element)
-      },
-      onDismiss: { [weak self] in
-        self?.hide()
-      }
-    )
-  }
-
-  /// Performs a click action on the given element
-  private func clickElement(_ element: ClickableElement) {
-    let success = AXInterface.clickElement(element)
-
-    if success {
-      // Hide overlay after successful click with brief delay for visual feedback
-      DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-        self.hide()
-      }
-    }
-  }
-
-  /// Updates the overlay with clickable elements
-  /// Must be called on the main thread
-  private func update(
-    elements: [ClickableElement],
-    hintManager: HintManager,
-    onElementClick: @escaping (ClickableElement) -> Void,
-    onDismiss: @escaping () -> Void
-  ) {
-    // Ensure we're on main thread for UI updates
-    guard Thread.isMainThread else {
-      DispatchQueue.main.async {
-        self.update(
-          elements: elements, hintManager: hintManager,
-          onElementClick: onElementClick, onDismiss: onDismiss)
-      }
-      return
-    }
-
-    guard let window = self.window, let screen = window.screen else {
-      debugLog("No window or screen available")
-      return
-    }
-
-    let screenFrame = screen.frame
-
-    // The screen with the menu bar is always index 0 (the primary display)
-    // This is the most reliable way to detect the primary screen
-    let isPrimaryScreen = (screen == NSScreen.screens[0])
-
-    debugLog("Overlay on screen: \(screenFrame), found \(elements.count) elements")
-
-    let windowFrame = window.frame
-
-    debugLog("Window frame: \(windowFrame)")
-    debugLog("Screen frame: \(screenFrame), window screen: \(window.screen?.frame ?? .zero)")
-
-    // Log element positions for debugging
-    for (index, element) in elements.enumerated() {
-      debugLog("Element \(index + 1) '\(element.title)' at global: \(element.frame)")
-    }
-
-    // Create the overlay view with hint manager
-    let overlayView = AccessibilityOverlayView(
-      elements: elements,
-      windowFrame: windowFrame,
-      windowHeight: windowFrame.height,
-      isPrimaryScreen: isPrimaryScreen,
-      hintManager: hintManager,
-      onElementClick: onElementClick,
-      onDismiss: onDismiss
-    )
-    let hostingView = NSHostingView(rootView: overlayView)
-
-    // Update window content (we're already on main thread)
-    window.contentView = hostingView
-    debugLog("Overlay view updated with \(elements.count) elements")
-  }
-
-}
-
-// MARK: - SwiftUI Views
+// MARK: - Hint Overlay Views and Components
 
 /// Loading indicator shown while scanning for elements
 struct LoadingOverlayView: View {
@@ -322,11 +36,9 @@ struct LoadingOverlayView: View {
 }
 
 /// Main overlay view displaying clickable elements with numbered hints
-struct AccessibilityOverlayView: View {
+struct HintOverlayView: View {
   let elements: [ClickableElement]
-  let windowFrame: CGRect  // Window's frame in global screen coordinates
-  let windowHeight: CGFloat  // Window height for coordinate conversion
-  let isPrimaryScreen: Bool
+  let windowFrame: CGRect
   let hintManager: HintManager
   let onElementClick: (ClickableElement) -> Void
   let onDismiss: () -> Void
@@ -336,16 +48,12 @@ struct AccessibilityOverlayView: View {
   init(
     elements: [ClickableElement],
     windowFrame: CGRect,
-    windowHeight: CGFloat,
-    isPrimaryScreen: Bool,
     hintManager: HintManager,
     onElementClick: @escaping (ClickableElement) -> Void,
     onDismiss: @escaping () -> Void
   ) {
     self.elements = elements
     self.windowFrame = windowFrame
-    self.windowHeight = windowHeight
-    self.isPrimaryScreen = isPrimaryScreen
     self.hintManager = hintManager
     self.onElementClick = onElementClick
     self.onDismiss = onDismiss
@@ -405,6 +113,45 @@ struct AccessibilityOverlayView: View {
       }
     }
     .edgesIgnoringSafeArea(.all)
+    .onAppear {
+      // Monitor keyboard events for hint input
+      NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [self] event in
+        _ = self.handleKeyEvent(event)
+        return nil  // Consume the event
+      }
+    }
+  }
+
+  private func handleKeyEvent(_ event: NSEvent) -> NSEvent? {
+    let keyCode = Int64(event.keyCode)
+
+    // Delete/Backspace
+    if keyCode == Key.Named.delete.rawValue || keyCode == Key.Named.forwardDelete.rawValue {
+      hintManager.removeLastCharacter()
+      return nil
+    }
+
+    // Check if it's a valid hint character
+    if let characters = event.characters?.lowercased(), let firstChar = characters.first,
+      HintManager.hintCharactersSet.contains(firstChar)
+    {
+      let accepted = hintManager.appendCharacter(firstChar)
+
+      if accepted {
+        // Check if exactly one match after updating prefix
+        let matchingElements = hintManager.getMatchingElements(for: hintManager.typedPrefix)
+
+        // Auto-click if exactly one match
+        if matchingElements.count == 1, let match = matchingElements.first {
+          DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+            self.onElementClick(match.element)
+          }
+        }
+      }
+      return nil
+    }
+
+    return event
   }
 
   // MARK: - View Components
@@ -421,45 +168,23 @@ struct AccessibilityOverlayView: View {
     let hintString = hint
 
     // COORDINATE SYSTEM CONVERSION:
-    // Accessibility API (kAXPositionAttribute) uses TOP-LEFT origin
-    // NSWindow.frame uses BOTTOM-LEFT origin
-    // SwiftUI uses TOP-LEFT origin
+    // - element.frame: Global screen coordinates with TOP-LEFT origin (across all displays)
+    // - windowFrame: Window position in global screen coordinates with BOTTOM-LEFT origin
+    // - SwiftUI view: Window-relative coordinates with TOP-LEFT origin
     //
     // Conversion steps:
-    // 1. X: Direct conversion (same horizontal system)
-    // 2. Y: Convert window frame from bottom-left to top-left, then calculate relative position
-    // Position hint at the top-left corner of the element
+    // 1. Convert element global position to window-relative
+    // 2. Account for coordinate system difference (bottom-left vs top-left)
+
+    // Get the primary screen height for coordinate system conversion
+    let primaryScreenHeight = NSScreen.screens.first?.frame.height ?? windowFrame.height
+
+    // Convert window's top edge from bottom-left to top-left origin
+    let windowTopYInTopLeft = primaryScreenHeight - windowFrame.maxY
+
+    // Convert element position to window-relative coordinates
     let viewX = element.frame.minX - windowFrame.minX
-
-    // Y conversion: Both Accessibility API and SwiftUI use top-left origin
-    // NSWindow.frame uses bottom-left origin, so convert window top edge to top-left origin
-    // For multi-monitor setups, we need the total screen height of all screens combined
-    // or the height of the screen containing the window
-    // Accessibility API coordinates are relative to the top-left of the primary screen
-    // So we need to find what Y coordinate corresponds to the window's top in top-left origin
-    let primaryScreenHeight = NSScreen.screens.first?.frame.height ?? windowHeight
-
-    // Convert window's top edge from bottom-left origin to top-left origin
-    // windowFrame.maxY is the top edge in bottom-left origin
-    // In top-left origin, this would be: screenHeight - windowFrame.maxY
-    let windowTopYInTopLeft = primaryScreenHeight - windowFrame.maxY  // Window top in top-left origin
-    let elementTopYInTopLeft = element.frame.minY  // Element top in top-left origin
-    let elementTopYRelativeToWindow = elementTopYInTopLeft - windowTopYInTopLeft
-
-    // Debug logging for coordinate conversion (first hint only to avoid spam)
-    if hint == hintManager.getHint(forIndex: 0) {
-      debugLog("Coordinate conversion for element '\(hint)' ('\(element.title)'):")
-      debugLog("  Element frame (global, top-left origin): \(element.frame)")
-      debugLog("  Window frame (global, bottom-left origin): \(windowFrame)")
-      debugLog("  Primary screen height: \(primaryScreenHeight)")
-      debugLog("  Window top in top-left origin: \(windowTopYInTopLeft)")
-      debugLog("  Element top in top-left origin: \(elementTopYInTopLeft)")
-      debugLog("  Element top Y relative to window top: \(elementTopYRelativeToWindow)")
-      debugLog(
-        "  Calculated viewX: \(viewX), viewY: \(elementTopYRelativeToWindow) (top-left origin)"
-      )
-      debugLog("  Geometry size: \(geometrySize)")
-    }
+    let viewY = element.frame.minY - windowTopYInTopLeft
 
     // Use .position() for absolute positioning within the geometry
     // .position() sets the CENTER of the view at the given coordinates
@@ -467,7 +192,7 @@ struct AccessibilityOverlayView: View {
     // Y: Position hint center at top edge (minY) by adding half minimum hint size
     // Note: The badge will expand from center, so multi-digit numbers will grow appropriately
     let posX = viewX + minHintSize / 2
-    let posY = elementTopYRelativeToWindow + minHintSize / 2
+    let posY = viewY + minHintSize / 2
 
     // Hint label content
     let textContent: some View = Group {

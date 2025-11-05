@@ -21,7 +21,7 @@ struct DaemonCommand: ParsableCommand {
 
     // Right Command + ` to assign keybinding for frontmost app
     kb.register([KeyPress(key: .character("`"), flags: .maskCmdRight)]) { _ in
-      if let appPath = WindowSwitcherOverlay.getFrontmostAppPath() {
+      if let appPath = WindowManager.main.getFrontmostAppPath() {
         KeybindingAssignmentOverlay.shared.show(for: appPath)
       }
     }
@@ -35,11 +35,11 @@ struct DaemonCommand: ParsableCommand {
     }
 
     kb.register([KeyPress(key: .character("O"), flags: .maskAlphaShift)]) { _ in
-      HintOverlay.shared.show()
+      OverlayManager.shared.showHintOverlay()
     }
 
     kb.register([KeyPress(key: .character("/"), flags: .maskCmdRight)]) { _ in
-      HintOverlay.shared.show()
+      OverlayManager.shared.showHintOverlay()
     }
 
     // CapsLock + J/K for scrolling
