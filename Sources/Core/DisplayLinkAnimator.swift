@@ -1,13 +1,12 @@
-import CoreVideo
-import Darwin
+import AppKit
 import Foundation
+import QuartzCore
 
 /// Provides display-link driven animations similar to requestAnimationFrame on the web.
 ///
-/// Note: This class uses CVDisplayLink which was deprecated in macOS 15.
-/// The new recommended APIs (NSView/NSWindow/NSScreen.displayLink) require a different
-/// architecture with view/window references. CVDisplayLink continues to work correctly
-/// and this can be refactored later if needed.
+/// This class uses CADisplayLink (available in macOS 14+) to provide display-synchronized
+/// animations. It supports both timed animations and continuous loops. All operations
+/// automatically dispatch to the main thread if called from a background thread.
 final class DisplayLinkAnimator {
   static let shared = DisplayLinkAnimator()
 
@@ -17,47 +16,35 @@ final class DisplayLinkAnimator {
   }
 
   private final class TimedAnimation {
-    var duration: TimeInterval
-    var preferredFrameInterval: TimeInterval
-    var startTime: Double?
-    var lastFrameTime: Double?
+    let duration: TimeInterval
+    var startTime: CFTimeInterval?
     let frameHandler: (Double) -> Void
     let completionHandler: (() -> Void)?
 
     init(
       duration: TimeInterval,
-      preferredFrameInterval: TimeInterval,
       frameHandler: @escaping (Double) -> Void,
       completionHandler: (() -> Void)?
     ) {
       self.duration = duration
-      self.preferredFrameInterval = preferredFrameInterval
       self.startTime = nil
-      self.lastFrameTime = nil
       self.frameHandler = frameHandler
       self.completionHandler = completionHandler
     }
   }
 
   private final class LoopAnimation {
-    var preferredFrameInterval: TimeInterval
-    var lastFrameTime: Double?
-    var frameHandler: (Double, Double) -> Void
+    var frameHandler: (CFTimeInterval, CFTimeInterval) -> Void
 
-    init(preferredFrameInterval: TimeInterval, frameHandler: @escaping (Double, Double) -> Void) {
-      self.preferredFrameInterval = preferredFrameInterval
-      self.lastFrameTime = nil
+    init(frameHandler: @escaping (CFTimeInterval, CFTimeInterval) -> Void) {
       self.frameHandler = frameHandler
     }
   }
 
-  private let syncQueue = DispatchQueue(label: "com.kbdcmd.display-link", qos: .userInteractive)
-  private var displayLink: CVDisplayLink?
+  private var displayLink: CADisplayLink?
   private var state: State?
 
-  private init() {
-    setupDisplayLink()
-  }
+  private init() {}
 
   /// Starts an animation invoking `frame` on each display refresh until `duration` elapses.
   func animate(
@@ -74,218 +61,125 @@ final class DisplayLinkAnimator {
       return
     }
 
-    syncQueue.sync {
-      ensureDisplayLink()
-
-      guard let link = displayLink else {
-        DispatchQueue.main.async {
-          frame(1.0)
-          completion?()
-        }
-        return
-      }
-
-      stopLocked()
+    let work = {
+      self.stopLocked()
 
       let animation = TimedAnimation(
         duration: duration,
-        preferredFrameInterval: 1.0 / Double(max(1, preferredFPS)),
         frameHandler: frame,
         completionHandler: completion
       )
 
-      state = .timed(animation)
-      CVDisplayLinkStart(link)  // Deprecated in macOS 15 - still functional
+      self.state = .timed(animation)
+      self.ensureDisplayLink()
+      let fps = Float(preferredFPS)
+      self.displayLink?.preferredFrameRateRange = CAFrameRateRange(
+        minimum: fps, maximum: fps, preferred: fps)
+    }
+
+    if Thread.isMainThread {
+      work()
+    } else {
+      DispatchQueue.main.async(execute: work)
     }
   }
 
   /// Starts (or updates) a continuous display-link loop.
-  func startLoop(preferredFPS: Int = 120, frame: @escaping (Double, Double) -> Void) {
-    syncQueue.sync {
-      ensureDisplayLink()
+  func startLoop(preferredFPS: Int = 120, frame: @escaping (CFTimeInterval, CFTimeInterval) -> Void)
+  {
+    let work = {
+      let fps = Float(preferredFPS)
+      let frameRateRange = CAFrameRateRange(minimum: fps, maximum: fps, preferred: fps)
 
-      guard let link = displayLink else {
-        return
-      }
-
-      let interval = 1.0 / Double(max(1, preferredFPS))
-
-      if case .loop(let loop)? = state {
+      if case .loop(let loop)? = self.state {
         loop.frameHandler = frame
-        loop.preferredFrameInterval = interval
-        if !CVDisplayLinkIsRunning(link) {  // Deprecated in macOS 15 - still functional
-          loop.lastFrameTime = nil
-          CVDisplayLinkStart(link)  // Deprecated in macOS 15 - still functional
+        self.displayLink?.preferredFrameRateRange = frameRateRange
+        if self.displayLink?.isPaused ?? true {
+          self.displayLink?.isPaused = false
         }
         return
       }
 
-      stopLocked()
+      self.stopLocked()
 
-      let loop = LoopAnimation(preferredFrameInterval: interval, frameHandler: frame)
-      state = .loop(loop)
-      CVDisplayLinkStart(link)  // Deprecated in macOS 15 - still functional
+      let loop = LoopAnimation(frameHandler: frame)
+      self.state = .loop(loop)
+      self.ensureDisplayLink()
+      self.displayLink?.preferredFrameRateRange = frameRateRange
+    }
+
+    if Thread.isMainThread {
+      work()
+    } else {
+      DispatchQueue.main.async(execute: work)
     }
   }
 
   /// Stops any running animation or loop.
   func stop() {
-    syncQueue.sync {
-      stopLocked()
+    let work = {
+      self.stopLocked()
+    }
+
+    if Thread.isMainThread {
+      work()
+    } else {
+      DispatchQueue.main.async(execute: work)
     }
   }
 
   private func stopLocked() {
-    if let link = displayLink, CVDisplayLinkIsRunning(link) {  // Deprecated in macOS 15 - still functional
-      CVDisplayLinkStop(link)  // Deprecated in macOS 15 - still functional
-    }
+    displayLink?.invalidate()
+    displayLink = nil
     state = nil
   }
 
   private func ensureDisplayLink() {
-    if displayLink == nil {
-      setupDisplayLink()
-    }
+    guard displayLink == nil else { return }
+    setupDisplayLink()
   }
 
   private func setupDisplayLink() {
-    var link: CVDisplayLink?
-    // Deprecated in macOS 15 - still functional, refactor to NSScreen.displayLink in future
-    guard CVDisplayLinkCreateWithActiveCGDisplays(&link) == kCVReturnSuccess,
-      let displayLink = link
-    else {
+    guard let screen = NSScreen.main else { return }
+
+    let link = screen.displayLink(target: self, selector: #selector(handleDisplayLink(_:)))
+    link.add(to: .main, forMode: .common)
+    self.displayLink = link
+  }
+
+  @objc private func handleDisplayLink(_ link: CADisplayLink) {
+    guard let currentState = state else {
       return
     }
 
-    CVDisplayLinkSetCurrentCGDisplay(displayLink, CGMainDisplayID())
+    let timestamp = link.timestamp
+    let targetTimestamp = link.targetTimestamp
+    let frameDuration = targetTimestamp - timestamp
 
-    let callback: CVDisplayLinkOutputCallback = {
-      (
-        _: CVDisplayLink,
-        _: UnsafePointer<CVTimeStamp>,
-        inOutputTime: UnsafePointer<CVTimeStamp>,
-        _: CVOptionFlags,
-        _: UnsafeMutablePointer<CVOptionFlags>,
-        displayLinkContext: UnsafeMutableRawPointer?
-      ) -> CVReturn in
-
-      guard let context = displayLinkContext else {
-        return kCVReturnError
+    switch currentState {
+    case .timed(let animation):
+      if animation.startTime == nil {
+        animation.startTime = timestamp
       }
 
-      let animator = Unmanaged<DisplayLinkAnimator>
-        .fromOpaque(context)
-        .takeUnretainedValue()
-      return animator.handleDisplayLink(timestamp: inOutputTime.pointee)
-    }
-
-    CVDisplayLinkSetOutputCallback(  // Deprecated in macOS 15 - still functional
-      displayLink,
-      callback,
-      UnsafeMutableRawPointer(Unmanaged.passUnretained(self).toOpaque()))
-
-    self.displayLink = displayLink
-  }
-
-  private func handleDisplayLink(timestamp: CVTimeStamp) -> CVReturn {
-    var timedFrame: ((Double) -> Void)?
-    var timedCompletion: (() -> Void)?
-    var timedProgress: Double = 0
-    var loopFrame: ((Double, Double) -> Void)?
-    var loopTimestamp: Double = 0
-    var loopDelta: Double = 0
-    var shouldSkip = false
-
-    syncQueue.sync {
-      guard let link = displayLink, let currentState = state else {
-        shouldSkip = true
+      guard let startTime = animation.startTime else {
         return
       }
 
-      let currentTime = Self.seconds(for: timestamp.hostTime)
+      let elapsed = timestamp - startTime
+      let progress = min(1.0, elapsed / animation.duration)
 
-      switch currentState {
-      case .timed(let animation):
-        if animation.startTime == nil {
-          animation.startTime = currentTime
-          animation.lastFrameTime = currentTime - animation.preferredFrameInterval
-        }
+      animation.frameHandler(progress)
 
-        guard let startTime = animation.startTime else {
-          shouldSkip = true
-          return
-        }
-
-        if let last = animation.lastFrameTime,
-          currentTime - last < animation.preferredFrameInterval
-        {
-          shouldSkip = true
-          return
-        }
-
-        let elapsed = currentTime - startTime
-        timedProgress = min(1.0, elapsed / animation.duration)
-
-        animation.lastFrameTime = currentTime
-        timedFrame = animation.frameHandler
-
-        if timedProgress >= 1.0 {
-          timedCompletion = animation.completionHandler
-          state = nil
-          CVDisplayLinkStop(link)  // Deprecated in macOS 15 - still functional
-        }
-
-      case .loop(let loop):
-        if let last = loop.lastFrameTime,
-          currentTime - last < loop.preferredFrameInterval
-        {
-          shouldSkip = true
-          return
-        }
-
-        let delta = loop.lastFrameTime.map { currentTime - $0 } ?? loop.preferredFrameInterval
-        loop.lastFrameTime = currentTime
-
-        loopFrame = loop.frameHandler
-        loopTimestamp = currentTime
-        loopDelta = delta
+      if progress >= 1.0 {
+        let completion = animation.completionHandler
+        state = nil
+        displayLink?.isPaused = true
+        completion?()
       }
+
+    case .loop(let loop):
+      loop.frameHandler(timestamp, frameDuration)
     }
-
-    if shouldSkip {
-      return kCVReturnSuccess
-    }
-
-    if let frame = timedFrame {
-      DispatchQueue.main.async {
-        frame(timedProgress)
-      }
-    }
-
-    if let completion = timedCompletion {
-      DispatchQueue.main.async {
-        completion()
-      }
-    }
-
-    if let loop = loopFrame {
-      DispatchQueue.main.async {
-        loop(loopTimestamp, loopDelta)
-      }
-    }
-
-    return kCVReturnSuccess
-  }
-
-  private static let timebaseInfo: mach_timebase_info = {
-    var info = mach_timebase_info_data_t()
-    mach_timebase_info(&info)
-    return info
-  }()
-
-  private static func seconds(for hostTime: UInt64) -> Double {
-    let info = timebaseInfo
-    let nanos = Double(hostTime) * Double(info.numer) / Double(info.denom)
-    return nanos / 1_000_000_000
   }
 }
