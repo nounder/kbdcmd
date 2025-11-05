@@ -133,6 +133,7 @@ public class Keybindings {
     CGEventFlags.maskControlLeft.rawValue | CGEventFlags.maskControlRight.rawValue
       | CGEventFlags.maskOptionLeft.rawValue | CGEventFlags.maskOptionRight.rawValue
       | CGEventFlags.maskCmdLeft.rawValue | CGEventFlags.maskCmdRight.rawValue
+      | CGEventFlags.maskShiftLeft.rawValue | CGEventFlags.maskShiftRight.rawValue
       | CGEventFlags.maskAlphaShift.rawValue
   }()
 
@@ -609,8 +610,9 @@ public class Keybindings {
     let hasControlBoth = flags.contains(.maskControlLeft) && flags.contains(.maskControlRight)
     let hasOptionBoth = flags.contains(.maskOptionLeft) && flags.contains(.maskOptionRight)
     let hasCmdBoth = flags.contains(.maskCmdLeft) && flags.contains(.maskCmdRight)
+    let hasShiftBoth = flags.contains(.maskShiftLeft) && flags.contains(.maskShiftRight)
 
-    return hasControlBoth || hasOptionBoth || hasCmdBoth
+    return hasControlBoth || hasOptionBoth || hasCmdBoth || hasShiftBoth
   }
 
   private func expandEitherFlags(_ flags: CGEventFlags) -> [CGEventFlags] {
@@ -667,6 +669,24 @@ public class Keybindings {
     } else if flags.contains(.maskCmdRight) {
       results = results.map {
         CGEventFlags(rawValue: $0.rawValue | CGEventFlags.maskCmdRight.rawValue)
+      }
+    }
+
+    // Handle shift either
+    if flags.contains(.maskShiftLeft) && flags.contains(.maskShiftRight) {
+      results = results.flatMap { base in
+        [
+          CGEventFlags(rawValue: base.rawValue | CGEventFlags.maskShiftLeft.rawValue),
+          CGEventFlags(rawValue: base.rawValue | CGEventFlags.maskShiftRight.rawValue),
+        ]
+      }
+    } else if flags.contains(.maskShiftLeft) {
+      results = results.map {
+        CGEventFlags(rawValue: $0.rawValue | CGEventFlags.maskShiftLeft.rawValue)
+      }
+    } else if flags.contains(.maskShiftRight) {
+      results = results.map {
+        CGEventFlags(rawValue: $0.rawValue | CGEventFlags.maskShiftRight.rawValue)
       }
     }
 
