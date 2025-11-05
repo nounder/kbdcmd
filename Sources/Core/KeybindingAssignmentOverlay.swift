@@ -35,6 +35,7 @@ struct KeybindingAssignmentView: View {
   let onDismiss: () -> Void
 
   @State private var pressedKey: String = ""
+  @State private var eventMonitor: Any?
 
   var body: some View {
     ZStack {
@@ -89,29 +90,51 @@ struct KeybindingAssignmentView: View {
       .frame(width: 400, height: 240)
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity)
-    .onAppear {
-      // Monitor keyboard events for character input
-      NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [self] event in
-        self.handleKeyEvent(event)
-        return nil  // Consume the event
-      }
-    }
+    .background(KeyEventHandlerView(pressedKey: $pressedKey, onKeyPress: onKeyPress))
+  }
+}
+
+/// Helper view to handle keyboard events using NSViewRepresentable
+private struct KeyEventHandlerView: NSViewRepresentable {
+  @Binding var pressedKey: String
+  let onKeyPress: (Character) -> Void
+
+  func makeNSView(context: Context) -> KeyEventNSView {
+    let view = KeyEventNSView()
+    view.pressedKey = $pressedKey
+    view.onKeyPress = onKeyPress
+    return view
   }
 
-  private func handleKeyEvent(_ event: NSEvent) {
-    guard let characters = event.characters,
-      let char = characters.first,
-      char.isLetter || char.isNumber
-    else {
-      return
+  func updateNSView(_ nsView: KeyEventNSView, context: Context) {}
+
+  class KeyEventNSView: NSView {
+    var pressedKey: Binding<String>?
+    var onKeyPress: ((Character) -> Void)?
+
+    override var acceptsFirstResponder: Bool { true }
+
+    override func viewDidMoveToWindow() {
+      super.viewDidMoveToWindow()
+      window?.makeFirstResponder(self)
     }
 
-    // Update UI to show pressed key
-    pressedKey = String(char)
+    override func keyDown(with event: NSEvent) {
+      guard let characters = event.characters,
+        let char = characters.first,
+        char.isLetter || char.isNumber
+      else {
+        super.keyDown(with: event)
+        return
+      }
 
-    // Delay slightly to show feedback before closing
-    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-      onKeyPress(char)
+      // Update UI to show pressed key
+      pressedKey?.wrappedValue = String(char)
+
+      // Delay slightly to show feedback before closing
+      DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+        self?.onKeyPress?(char)
+      }
     }
   }
 }

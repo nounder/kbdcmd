@@ -10,7 +10,7 @@ public class OverlayManager {
     private var windowChangePublisher: WindowChangePublisher?
 
     private enum ActiveOverlay {
-        case hint(window: NSWindow, manager: HintManager)
+        case hint(window: NSWindow)
         case keybindingAssignment(window: NSWindow)
         case windowSwitcher(window: NSWindow)
     }
@@ -162,9 +162,7 @@ public class OverlayManager {
         guard let overlay = activeOverlay else { return }
 
         switch overlay {
-        case .hint(let window, _):
-            window.orderOut(nil)
-        case .keybindingAssignment(let window):
+        case .hint(let window), .keybindingAssignment(let window):
             window.orderOut(nil)
         case .windowSwitcher(let window):
             windowChangePublisher?.stopMonitoring()
@@ -180,7 +178,7 @@ public class OverlayManager {
     /// Intercepts events for the active overlay
     /// Returns true if the event was handled by an overlay
     public func interceptEvent(type: CGEventType, event: CGEvent) -> Bool {
-        guard activeOverlay != nil else { return false }
+        guard let overlay = activeOverlay else { return false }
 
         // Handle mouse clicks
         if type == .leftMouseDown {
@@ -199,8 +197,19 @@ public class OverlayManager {
                 return true
             }
 
-            // Let overlay-specific SwiftUI views handle other keys
-            // The views will use NSEvent monitoring or custom input handling
+            // For keybinding assignment and hint overlays, manually post the event to the window
+            // because CGEvent taps intercept events before they reach NSWindow
+            switch overlay {
+            case .keybindingAssignment(let window), .hint(let window):
+                if let nsEvent = NSEvent(cgEvent: event) {
+                    window.sendEvent(nsEvent)
+                    return true  // Consume the event since we handled it
+                }
+            case .windowSwitcher:
+                // Window switcher doesn't need keyboard input forwarding
+                break
+            }
+
             return false
         }
 
@@ -236,12 +245,11 @@ public class OverlayManager {
         window.ignoresMouseEvents = false
         window.orderFrontRegardless()
 
-        // Store with placeholder manager (will be updated when elements load)
-        activeOverlay = .hint(window: window, manager: HintManager(elements: []))
+        activeOverlay = .hint(window: window)
     }
 
     private func updateHintOverlayWithElements(_ elements: [ClickableElement]) {
-        guard case .hint(let window, _) = activeOverlay else { return }
+        guard case .hint(let window) = activeOverlay else { return }
 
         let manager = HintManager(elements: elements)
 
@@ -259,7 +267,7 @@ public class OverlayManager {
         let hostingView = NSHostingView(rootView: contentView)
 
         window.contentView = hostingView
-        activeOverlay = .hint(window: window, manager: manager)
+        // Keep the same window, just update content
     }
 
     private func clickElement(_ element: ClickableElement) {
@@ -296,7 +304,6 @@ public class OverlayManager {
         window.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle]
         window.ignoresMouseEvents = false
         window.orderFrontRegardless()
-        window.makeKey()
 
         switch type {
         case .keybindingAssignment:

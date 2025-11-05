@@ -113,49 +113,79 @@ struct HintOverlayView: View {
       }
     }
     .edgesIgnoringSafeArea(.all)
-    .onAppear {
-      // Monitor keyboard events for hint input
-      NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [self] event in
-        _ = self.handleKeyEvent(event)
-        return nil  // Consume the event
-      }
-    }
-  }
-
-  private func handleKeyEvent(_ event: NSEvent) -> NSEvent? {
-    let keyCode = Int64(event.keyCode)
-
-    // Delete/Backspace
-    if keyCode == Key.Named.delete.rawValue || keyCode == Key.Named.forwardDelete.rawValue {
-      hintManager.removeLastCharacter()
-      return nil
-    }
-
-    // Check if it's a valid hint character
-    if let characters = event.characters?.lowercased(), let firstChar = characters.first,
-      HintManager.hintCharactersSet.contains(firstChar)
-    {
-      let accepted = hintManager.appendCharacter(firstChar)
-
-      if accepted {
-        // Check if exactly one match after updating prefix
-        let matchingElements = hintManager.getMatchingElements(for: hintManager.typedPrefix)
-
-        // Auto-click if exactly one match
-        if matchingElements.count == 1, let match = matchingElements.first {
-          DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-            self.onElementClick(match.element)
-          }
-        }
-      }
-      return nil
-    }
-
-    return event
+    .background(HintKeyEventHandlerView(hintManager: hintManager, onElementClick: onElementClick))
   }
 
   // MARK: - View Components
+}
 
+/// Helper view to handle keyboard events for hints using NSViewRepresentable
+private struct HintKeyEventHandlerView: NSViewRepresentable {
+  let hintManager: HintManager
+  let onElementClick: (ClickableElement) -> Void
+
+  func makeNSView(context: Context) -> HintKeyEventNSView {
+    let view = HintKeyEventNSView()
+    view.hintManager = hintManager
+    view.onElementClick = onElementClick
+    return view
+  }
+
+  func updateNSView(_ nsView: HintKeyEventNSView, context: Context) {}
+
+  class HintKeyEventNSView: NSView {
+    var hintManager: HintManager?
+    var onElementClick: ((ClickableElement) -> Void)?
+
+    override var acceptsFirstResponder: Bool { true }
+
+    override func viewDidMoveToWindow() {
+      super.viewDidMoveToWindow()
+      window?.makeFirstResponder(self)
+    }
+
+    override func keyDown(with event: NSEvent) {
+      guard let hintManager = hintManager else {
+        super.keyDown(with: event)
+        return
+      }
+
+      let keyCode = Int64(event.keyCode)
+
+      // Delete/Backspace
+      if keyCode == Key.Named.delete.rawValue || keyCode == Key.Named.forwardDelete.rawValue {
+        hintManager.removeLastCharacter()
+        return
+      }
+
+      // Check if it's a valid hint character
+      if let characters = event.characters?.lowercased(), let firstChar = characters.first,
+        HintManager.hintCharactersSet.contains(firstChar)
+      {
+        let accepted = hintManager.appendCharacter(firstChar)
+
+        if accepted {
+          // Check if exactly one match after updating prefix
+          let matchingElements = hintManager.getMatchingElements(for: hintManager.typedPrefix)
+
+          // Auto-click if exactly one match
+          if matchingElements.count == 1, let match = matchingElements.first {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
+              self?.onElementClick?(match.element)
+            }
+          }
+        }
+        return
+      }
+
+      super.keyDown(with: event)
+    }
+  }
+}
+
+// MARK: - HintOverlayView Components Extension
+
+extension HintOverlayView {
   /// Creates a hint badge at the top-left corner of an element with liquid glass effect
   private func elementHint(
     for element: ClickableElement,
