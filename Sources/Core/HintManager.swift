@@ -72,15 +72,15 @@ class HintManager: ObservableObject {
   /// Returns true if the character was accepted (forms a valid prefix)
   func appendCharacter(_ char: Character) -> Bool {
     let newPrefix = typedPrefix + String(char).uppercased()
-    
+
     // Check if any hint matches this prefix
     let hasMatch = hints.contains { $0.hasPrefix(newPrefix) }
-    
+
     if hasMatch {
       typedPrefix = newPrefix
       return true
     }
-    
+
     return false
   }
 
@@ -117,4 +117,3 @@ class HintManager: ObservableObject {
     return index < hints.count ? hints[index] : nil
   }
 }
-

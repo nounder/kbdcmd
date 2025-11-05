@@ -106,7 +106,7 @@ public class KeybindingAssignmentOverlay: NSObject {
     self.window = window
     self.hostingView = hostingView
   }
-  
+
   // Called from KeyListener when a key is pressed and overlay is visible
   public func handleKeyPress(keyCode: Int64, characters: String?) -> Bool {
     // ESC to cancel
@@ -114,47 +114,50 @@ public class KeybindingAssignmentOverlay: NSObject {
       hide()
       return true
     }
-    
+
     // Get character
     guard let characters = characters,
-          let char = characters.first,
-          char.isLetter else {
+      let char = characters.first,
+      char.isLetter || char.isNumber
+    else {
       return false
     }
-    
+
     // Update the view to show pressed key
     pressedKeyState = String(char)
     updateView()
-    
+
     // Delay slightly to show the pressed key before closing
     DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
-      self?.handleLetterInput(char)
+      self?.handleCharacterInput(char)
     }
-    
+
     return true
   }
-  
+
   // Called when user clicks anywhere on the overlay
   public func handleMouseClick() -> Bool {
     hide()
     return true
   }
-  
+
   private func updateView() {
     guard let hostingView = hostingView else { return }
-    
+
     let targetName: String
     let isWindowMode: Bool
-    
+
     switch assignmentMode {
     case .app:
-      targetName = (currentAppPath as? NSString)?.lastPathComponent.replacingOccurrences(of: ".app", with: "") ?? ""
+      targetName =
+        (currentAppPath as? NSString)?.lastPathComponent.replacingOccurrences(of: ".app", with: "")
+        ?? ""
       isWindowMode = false
     case .window:
       targetName = WindowManager.main.getWindowTitle(windowId: currentWindowId ?? 0) ?? "Window"
       isWindowMode = true
     }
-    
+
     let updatedView = KeybindingAssignmentView(
       targetName: targetName,
       pressedKey: pressedKeyState,
@@ -173,15 +176,16 @@ public class KeybindingAssignmentOverlay: NSObject {
     pressedKeyState = ""
   }
 
-  private func handleLetterInput(_ letter: Character) {
+  private func handleCharacterInput(_ character: Character) {
     switch assignmentMode {
     case .app:
       guard let appPath = currentAppPath else { return }
-      Keybindings.shared.assignAppKeybinding(letter: letter, appPath: appPath)
+      Keybindings.shared.assignAppKeybinding(character: character, appPath: appPath)
     case .window:
       guard let windowId = currentWindowId else { return }
       // Always include minimized windows for window keybindings
-      Keybindings.shared.assignWindowKeybinding(letter: letter, windowId: windowId, includeMinimized: true)
+      Keybindings.shared.assignWindowKeybinding(
+        character: character, windowId: windowId, includeMinimized: true)
     }
     hide()
   }
@@ -206,7 +210,7 @@ struct KeybindingAssignmentView: View {
           .foregroundColor(.white)
 
         if isWindowMode {
-          Text("Press a letter key for window:")
+          Text("Character for window:")
             .font(.body)
             .foregroundColor(.white.opacity(0.8))
 
@@ -217,7 +221,7 @@ struct KeybindingAssignmentView: View {
             .lineLimit(2)
             .multilineTextAlignment(.center)
         } else {
-          Text("Press a letter key for \(targetName)")
+          Text("Character for \(targetName)")
             .font(.body)
             .foregroundColor(.white.opacity(0.8))
         }

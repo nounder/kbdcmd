@@ -144,14 +144,14 @@ public class Keybindings {
     let homeDirectory = FileManager.default.homeDirectoryForCurrentUser
     configDirectory = homeDirectory.appendingPathComponent(".config/kbdcmd")
     keysFileURL = configDirectory.appendingPathComponent("keys.json")
-    
+
     // Create config directory if it doesn't exist
     try? FileManager.default.createDirectory(
       at: configDirectory,
       withIntermediateDirectories: true,
       attributes: nil
     )
-    
+
     // Load saved keybindings
     loadKeybindings()
   }
@@ -294,27 +294,27 @@ public class Keybindings {
 
   // MARK: - App Keybinding Management
 
-  public func assignAppKeybinding(letter: Character, appPath: String) {
-    let upperLetter = Character(String(letter).uppercased())
-    
+  public func assignAppKeybinding(character: Character, appPath: String) {
+    let upperLetter = Character(String(character).uppercased())
+
     // If this app already has a different keybinding, remove it
     if let existingKey = getKeybindingForApp(appPath), existingKey != upperLetter {
       keybindings.removeValue(forKey: existingKey)
     }
-    
+
     // Clean up window observer if this letter was assigned to a window
     if case .windowActivation(let windowId, _) = keybindings[upperLetter] {
       stopMonitoringWindow(windowId)
     }
-    
+
     // Assign new keybinding (this will overwrite if the letter was already assigned to another app/window)
     keybindings[upperLetter] = .appActivation(appPath: appPath)
-    
+
     // Register the keybinding with right command
     register([KeyPress(key: .character(upperLetter), flags: .maskCmdRight)]) { _ in
       _ = try? ApplicationManager.openOrFocus(appPath)
     }
-    
+
     // Save to disk
     saveKeybindings()
   }
@@ -341,33 +341,38 @@ public class Keybindings {
 
   // MARK: - Window Keybinding Management
 
-  public func assignWindowKeybinding(letter: Character, windowId: CGWindowID, includeMinimized: Bool = false) {
-    let upperLetter = Character(String(letter).uppercased())
-    debugLog("Assigning window \(windowId) to key '\(upperLetter)', includeMinimized: \(includeMinimized)")
-    
+  public func assignWindowKeybinding(
+    character: Character, windowId: CGWindowID, includeMinimized: Bool = false
+  ) {
+    let upperLetter = Character(String(character).uppercased())
+    debugLog(
+      "Assigning window \(windowId) to key '\(upperLetter)', includeMinimized: \(includeMinimized)")
+
     // Clean up previous assignment if any
     if case .windowActivation(let oldWindowId, _) = keybindings[upperLetter] {
       stopMonitoringWindow(oldWindowId)
     }
-    
+
     // Assign new keybinding
-    keybindings[upperLetter] = .windowActivation(windowId: windowId, includeMinimized: includeMinimized)
+    keybindings[upperLetter] = .windowActivation(
+      windowId: windowId, includeMinimized: includeMinimized)
     debugLog("Stored keybinding: \(upperLetter) -> window \(windowId)")
-    
+
     // Register the keybinding with right command
     register([KeyPress(key: .character(upperLetter), flags: .maskCmdRight)]) { [weak self] _ in
       guard let self = self else { return }
       debugLog("Keybinding '\(upperLetter)' triggered for window \(windowId)")
-      if !WindowManager.main.activateWindow(windowId: windowId, includeMinimized: includeMinimized) {
+      if !WindowManager.main.activateWindow(windowId: windowId, includeMinimized: includeMinimized)
+      {
         // Window doesn't exist anymore, remove keybinding
         debugLog("Window activation failed, removing keybinding '\(upperLetter)'")
         self.removeKeybinding(forLetter: upperLetter)
       }
     }
-    
+
     // Start monitoring this window for destruction
     startMonitoringWindow(windowId)
-    
+
     // Note: Window bindings are NOT saved to disk
   }
 
@@ -378,24 +383,24 @@ public class Keybindings {
       }
       return false
     }?.key
-    
+
     if result != nil {
       debugLog("Found keybinding '\(result!)' for window \(windowId)")
     }
-    
+
     return result
   }
 
   public func removeKeybinding(forLetter letter: Character) {
     let upperLetter = Character(String(letter).uppercased())
-    
+
     // Clean up window observer if this was a window keybinding
     if case .windowActivation(let windowId, _) = keybindings[upperLetter] {
       stopMonitoringWindow(windowId)
     }
-    
+
     keybindings.removeValue(forKey: upperLetter)
-    
+
     // If it was an app keybinding, update persistence
     saveKeybindings()
   }
@@ -410,7 +415,7 @@ public class Keybindings {
     // Get window's pid
     let windowsInfo = CGWindowListCopyWindowInfo(
       [.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID)
-    
+
     guard let windowList = windowsInfo as? [[String: Any]],
       let windowDict = windowList.first(where: {
         ($0[kCGWindowNumber as String] as? CGWindowID) == windowId
@@ -420,7 +425,7 @@ public class Keybindings {
       debugLog("Failed to find window \(windowId) for monitoring")
       return
     }
-    
+
     // Check if we already have an observer for this app
     if appObservers[pid] != nil {
       // Observer already exists for this app, just track this window
@@ -428,26 +433,28 @@ public class Keybindings {
       debugLog("Added window \(windowId) to existing observer for pid \(pid)")
       return
     }
-    
+
     // Create new observer for this app
     var observer: AXObserver?
-    let result = AXObserverCreate(pid, { (observer, element, notification, refcon) in
-      let keybindings = Unmanaged<Keybindings>.fromOpaque(refcon!).takeUnretainedValue()
-      
-      // Check if this is a window we're monitoring
-      if let windowId = element.containingWindowId() {
-        keybindings.handleWindowDestroyed(windowId)
-      }
-    }, &observer)
-    
+    let result = AXObserverCreate(
+      pid,
+      { (observer, element, notification, refcon) in
+        let keybindings = Unmanaged<Keybindings>.fromOpaque(refcon!).takeUnretainedValue()
+
+        // Check if this is a window we're monitoring
+        if let windowId = element.containingWindowId() {
+          keybindings.handleWindowDestroyed(windowId)
+        }
+      }, &observer)
+
     guard result == .success, let observer = observer else {
       debugLog("Failed to create AX observer for pid \(pid)")
       return
     }
-    
+
     // Get app element
     let axApp = AXUIElementCreateApplication(pid)
-    
+
     // Add notification for window destruction
     AXObserverAddNotification(
       observer,
@@ -455,14 +462,14 @@ public class Keybindings {
       kAXUIElementDestroyedNotification as CFString,
       Unmanaged.passUnretained(self).toOpaque()
     )
-    
+
     // Add to run loop
     CFRunLoopAddSource(
       CFRunLoopGetCurrent(),
       AXObserverGetRunLoopSource(observer),
       .defaultMode
     )
-    
+
     // Store observer and track this window
     appObservers[pid] = observer
     monitoredWindows[pid] = [windowId]
@@ -475,11 +482,11 @@ public class Keybindings {
       debugLog("Window \(windowId) not found in monitored windows")
       return
     }
-    
+
     // Remove this window from the tracked set
     monitoredWindows[pid]?.remove(windowId)
     debugLog("Removed window \(windowId) from monitoring for pid \(pid)")
-    
+
     // If no more windows are being monitored for this app, remove the observer
     if monitoredWindows[pid]?.isEmpty == true {
       if let observer = appObservers[pid] {
@@ -497,7 +504,7 @@ public class Keybindings {
 
   private func handleWindowDestroyed(_ windowId: CGWindowID) {
     debugLog("Window \(windowId) destroyed")
-    
+
     // Find and remove keybinding for this window
     if let letter = keybindings.first(where: {
       if case .windowActivation(let id, _) = $0.value, id == windowId {
@@ -516,23 +523,23 @@ public class Keybindings {
     guard FileManager.default.fileExists(atPath: keysFileURL.path) else {
       return
     }
-    
+
     do {
       let data = try Data(contentsOf: keysFileURL)
       let file = try JSONDecoder().decode(KeybindingsFile.self, from: data)
-      
+
       // Check version compatibility (currently only version 1 exists)
       guard file.version == 1 else {
         print("Unsupported keybindings file version: \(file.version)")
         return
       }
-      
+
       // Restore keybindings
       for binding in file.items {
         guard let letter = binding.letter.first else { continue }
         let upperLetter = Character(String(letter).uppercased())
         keybindings[upperLetter] = .appActivation(appPath: binding.appPath)
-        
+
         // Register the keybinding
         register([KeyPress(key: .character(upperLetter), flags: .maskCmdRight)]) { _ in
           _ = try? ApplicationManager.openOrFocus(binding.appPath)
@@ -551,9 +558,9 @@ public class Keybindings {
       }
       return nil
     }.sorted { $0.letter < $1.letter }
-    
+
     let file = KeybindingsFile(version: 1, items: bindings)
-    
+
     do {
       let encoder = JSONEncoder()
       encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
