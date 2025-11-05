@@ -184,7 +184,7 @@ public class WindowManager {
 
   public func activateWindow(windowId: CGWindowID, includeMinimized: Bool = false) -> Bool {
     debugLog("Activating window \(windowId), includeMinimized: \(includeMinimized)")
-    
+
     // Get all windows from all apps
     let windowsInfo = CGWindowListCopyWindowInfo(
       [.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID)
@@ -208,8 +208,9 @@ public class WindowManager {
 
     // Get all windows
     var axValue: AnyObject?
-    guard AXUIElementCopyAttributeValue(axApp, kAXWindowsAttribute as CFString, &axValue)
-      == .success,
+    guard
+      AXUIElementCopyAttributeValue(axApp, kAXWindowsAttribute as CFString, &axValue)
+        == .success,
       let axWindows = axValue as? [AXUIElement]
     else {
       debugLog("Failed to get AX windows for pid \(pid)")
@@ -219,9 +220,11 @@ public class WindowManager {
     debugLog("Got \(axWindows.count) AX windows")
 
     // Find the specific window by CGWindowID
-    guard let targetWindow = axWindows.first(where: {
-      $0.containingWindowId() == windowId
-    }) else {
+    guard
+      let targetWindow = axWindows.first(where: {
+        $0.containingWindowId() == windowId
+      })
+    else {
       debugLog("Failed to find window \(windowId) in AX windows")
       return false
     }
@@ -286,8 +289,9 @@ public class WindowManager {
     let axApp = AXUIElementCreateApplication(pid)
 
     var axValue: AnyObject?
-    guard AXUIElementCopyAttributeValue(axApp, kAXWindowsAttribute as CFString, &axValue)
-      == .success,
+    guard
+      AXUIElementCopyAttributeValue(axApp, kAXWindowsAttribute as CFString, &axValue)
+        == .success,
       let axWindows = axValue as? [AXUIElement],
       let targetWindow = axWindows.first(where: { $0.containingWindowId() == windowId })
     else {

@@ -1,36 +1,36 @@
 import Carbon
 import Cocoa
 
-public extension CGEventFlags {
-  static var maskShiftLeft: CGEventFlags {
+extension CGEventFlags {
+  public static var maskShiftLeft: CGEventFlags {
     return CGEventFlags(rawValue: 0x0000_0002)
   }
 
-  static var maskShiftRight: CGEventFlags {
+  public static var maskShiftRight: CGEventFlags {
     return CGEventFlags(rawValue: 0x0000_0004)
   }
 
-  static var maskCmdLeft: CGEventFlags {
+  public static var maskCmdLeft: CGEventFlags {
     return CGEventFlags(rawValue: 0x0000_0008)
   }
 
-  static var maskCmdRight: CGEventFlags {
+  public static var maskCmdRight: CGEventFlags {
     return CGEventFlags(rawValue: 0x0000_0010)
   }
 
-  static var maskControlLeft: CGEventFlags {
+  public static var maskControlLeft: CGEventFlags {
     return CGEventFlags(rawValue: 0x0000_0001)
   }
 
-  static var maskControlRight: CGEventFlags {
+  public static var maskControlRight: CGEventFlags {
     return CGEventFlags(rawValue: 0x0000_2000)
   }
 
-  static var maskOptionLeft: CGEventFlags {
+  public static var maskOptionLeft: CGEventFlags {
     return CGEventFlags(rawValue: 0x0000_0020)
   }
 
-  static var maskOptionRight: CGEventFlags {
+  public static var maskOptionRight: CGEventFlags {
     return CGEventFlags(rawValue: 0x0000_0040)
   }
 }

@@ -113,7 +113,7 @@ public class HintOverlay {
       HintManager.hintCharactersSet.contains(firstChar)
     {
       let accepted = manager.appendCharacter(firstChar)
-      
+
       if accepted {
         // Check if exactly one match after updating prefix
         let matchingElements = manager.getMatchingElements(for: manager.typedPrefix)
@@ -193,7 +193,7 @@ public class HintOverlay {
     // Create hint manager
     let manager = HintManager(elements: elements)
     self.hintManager = manager
-    
+
     // Store callbacks
     self.onElementClick = { [weak self] element in
       self?.clickElement(element)

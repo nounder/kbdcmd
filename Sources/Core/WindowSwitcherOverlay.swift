@@ -98,7 +98,8 @@ public class WindowSwitcherOverlay: NSObject {
 
   public static func getFrontmostAppPath() -> String? {
     guard let frontmostApp = NSWorkspace.shared.frontmostApplication,
-          let bundleURL = frontmostApp.bundleURL else {
+      let bundleURL = frontmostApp.bundleURL
+    else {
       return nil
     }
     return bundleURL.path
@@ -125,9 +126,11 @@ struct WindowSwitcherView: View {
         }
 
         // Show running apps without keybindings
-        ForEach(publisher.windowGroups.filter { group in
-          !hasKeybinding(for: group)
-        }) { group in
+        ForEach(
+          publisher.windowGroups.filter { group in
+            !hasKeybinding(for: group)
+          }
+        ) { group in
           runningAppView(for: group)
         }
       }
@@ -152,11 +155,12 @@ struct WindowSwitcherView: View {
 
   private func getAllAppsWithKeybindings() -> [AppEntry] {
     let keybindings = Keybindings.shared.getAppKeybindings()
-    
+
     return keybindings.map { letter, appPath in
-      let appName = (appPath as NSString).lastPathComponent.replacingOccurrences(of: ".app", with: "")
+      let appName = (appPath as NSString).lastPathComponent.replacingOccurrences(
+        of: ".app", with: "")
       let group = publisher.windowGroups.first { $0.appName == appName }
-      
+
       // Load icon even if app is not running
       let icon: NSImage? = {
         if let group = group, let groupIcon = group.appIcon {
@@ -165,7 +169,7 @@ struct WindowSwitcherView: View {
         // App not running, try to load icon from bundle path
         return NSWorkspace.shared.icon(forFile: appPath)
       }()
-      
+
       return AppEntry(
         appPath: appPath,
         appName: appName,
@@ -179,7 +183,8 @@ struct WindowSwitcherView: View {
   private func hasKeybinding(for group: AppWindowGroup) -> Bool {
     let keybindings = Keybindings.shared.getAppKeybindings()
     return keybindings.values.contains { appPath in
-      let appName = (appPath as NSString).lastPathComponent.replacingOccurrences(of: ".app", with: "")
+      let appName = (appPath as NSString).lastPathComponent.replacingOccurrences(
+        of: ".app", with: "")
       return appName == group.appName
     }
   }
@@ -335,7 +340,7 @@ struct KeyboardKeyView: View {
             LinearGradient(
               gradient: Gradient(colors: [
                 Color(white: 0.3),
-                Color(white: 0.2)
+                Color(white: 0.2),
               ]),
               startPoint: .top,
               endPoint: .bottom
@@ -349,4 +354,3 @@ struct KeyboardKeyView: View {
       )
   }
 }
-

@@ -8,7 +8,7 @@ public struct AXSnapshot: Codable {
   public let root: AXSnapshotNode
   public let timings: [TimingEntry]
   public let metadata: SnapshotMetadata
-  
+
   public init(root: AXSnapshotNode, timings: [TimingEntry], metadata: SnapshotMetadata) {
     self.root = root
     self.timings = timings
@@ -19,7 +19,7 @@ public struct AXSnapshot: Codable {
     public let timestamp: Date
     public let totalDuration: TimeInterval
     public let nodeCount: Int
-    
+
     public init(timestamp: Date, totalDuration: TimeInterval, nodeCount: Int) {
       self.timestamp = timestamp
       self.totalDuration = totalDuration
@@ -79,7 +79,7 @@ public final class AXSnapshotNode: Codable {
 /// A reference to another node in the tree (for parent/sibling relationships)
 public struct AXSnapshotReference: Codable {
   public let id: String
-  
+
   public init(id: String) {
     self.id = id
   }
@@ -91,7 +91,7 @@ public struct AXSnapshotReference: Codable {
 public struct AXSnapshotAction: Codable {
   public let name: String
   public let description: String?
-  
+
   public init(name: String, description: String?) {
     self.name = name
     self.description = description
@@ -127,7 +127,7 @@ public struct TimingEntry: Codable {
   public let nodeId: String
   public let duration: TimeInterval
   public let timestamp: Date
-  
+
   public init(operation: String, nodeId: String, duration: TimeInterval, timestamp: Date) {
     self.operation = operation
     self.nodeId = nodeId

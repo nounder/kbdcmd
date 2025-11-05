@@ -390,7 +390,9 @@ class AXInterface {
     let finalTitle = trimmedTitle.isEmpty ? defaultTitle : trimmedTitle
 
     // Debug logging for buttons, tabs, text fields, checkboxes, text areas, pop-up buttons, menu items, and clickable groups
-    if isButton || isTab || isTextField || isCheckBox || isTextArea || isPopUpButton || isMenuItem || isClickableGroup {
+    if isButton || isTab || isTextField || isCheckBox || isTextArea || isPopUpButton || isMenuItem
+      || isClickableGroup
+    {
       let elementType: String
       if isTab {
         elementType = "tab"
@@ -425,7 +427,9 @@ class AXInterface {
       title: finalTitle)
     {
 
-      if isButton || isTab || isTextField || isCheckBox || isTextArea || isPopUpButton || isMenuItem || isClickableGroup {
+      if isButton || isTab || isTextField || isCheckBox || isTextArea || isPopUpButton || isMenuItem
+        || isClickableGroup
+      {
         let elementType: String
         if isTab {
           elementType = "tab"
@@ -455,7 +459,9 @@ class AXInterface {
         isEnabled: attributes.enabled ?? true
       )
       clickableElements.append(clickable)
-    } else if isButton || isTab || isTextField || isCheckBox || isTextArea || isPopUpButton || isMenuItem || isClickableGroup {
+    } else if isButton || isTab || isTextField || isCheckBox || isTextArea || isPopUpButton
+      || isMenuItem || isClickableGroup
+    {
       let elementType: String
       if isTab {
         elementType = "Tab"

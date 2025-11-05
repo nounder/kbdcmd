@@ -1,6 +1,6 @@
 import ArgumentParser
-import Foundation
 import Core
+import Foundation
 
 @main
 struct Kbdcmd: ParsableCommand {
