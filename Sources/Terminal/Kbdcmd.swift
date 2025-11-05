@@ -14,8 +14,6 @@ struct Kbdcmd: ParsableCommand {
       CycleCommand.self,
       OpenCycleCommand.self,
       SwitchDesktopCommand.self,
-      MarkWindowCommand.self,
-      FocusMarkCommand.self,
       SnapshotCommand.self,
       KeyboardCommand.self,
     ]
