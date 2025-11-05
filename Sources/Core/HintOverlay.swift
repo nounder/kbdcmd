@@ -95,15 +95,15 @@ public class HintOverlay {
   func handleKeyboardEvent(keyCode: Int64, characters: String?) -> Bool {
     guard let manager = hintManager else { return false }
 
-    // ESC key dismisses overlay
-    if keyCode == 53 {  // ESC key
+    if keyCode == Key.Named.escape.rawValue {
       manager.clearPrefix()
       onDismiss?()
       return true
     }
 
-    // Backspace/Delete removes last character
-    if keyCode == 51 || keyCode == 117 {  // Backspace or Delete
+    if keyCode == Key.Named.delete.rawValue
+      || keyCode == Key.Named.forwardDelete.rawValue
+    {
       manager.removeLastCharacter()
       return true
     }

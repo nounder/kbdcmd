@@ -2,7 +2,7 @@ import ApplicationServices
 import Cocoa
 
 public final class Snippets {
-  private static let backspaceKeyCode: CGKeyCode = 51  // Backspace
+  private static let backspaceKeyCode: CGKeyCode = CGKeyCode(Key.Named.delete.rawValue)
   private static let nonCharacterModifierMask: UInt64 = {
     CGEventFlags.maskControlLeft.rawValue | CGEventFlags.maskControlRight.rawValue
       | CGEventFlags.maskOptionLeft.rawValue | CGEventFlags.maskOptionRight.rawValue

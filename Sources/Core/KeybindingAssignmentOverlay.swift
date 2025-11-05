@@ -110,7 +110,7 @@ public class KeybindingAssignmentOverlay: NSObject {
   // Called from KeyListener when a key is pressed and overlay is visible
   public func handleKeyPress(keyCode: Int64, characters: String?) -> Bool {
     // ESC to cancel
-    if keyCode == 53 {
+    if keyCode == Key.Named.escape.rawValue {
       hide()
       return true
     }

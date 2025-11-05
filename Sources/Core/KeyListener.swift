@@ -322,14 +322,14 @@ public class KeyListener {
 
       // If window switcher overlay is visible, consume all keyboard events (except ESC to close)
       if WindowSwitcherOverlay.shared.isVisible {
-        if keyCode == 53 {  // ESC key closes overlay
+        if keyCode == Key.Named.escape.rawValue {
           WindowSwitcherOverlay.shared.hide()
         }
         return true  // Consume all events when switcher is visible
       }
 
-      // ESC key (keyCode 53) dismisses accessibility overlay
-      if keyCode == 53 && HintOverlay.shared.isVisible {
+      // ESC key dismisses accessibility overlay
+      if keyCode == Key.Named.escape.rawValue && HintOverlay.shared.isVisible {
         HintOverlay.shared.hide()
         return true
       }
