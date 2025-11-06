@@ -17,6 +17,7 @@ class AXInterface {
   private var currentHierarchy: [AXUIElement] = []
   private var scrollAreas: [CGRect] = []
   private var chromeAreas: [CGRect] = []
+  private var isInScrollBar = false
 
   // Computed properties for accessing current context
   private var currentScrollArea: CGRect? { scrollAreas.last }
@@ -27,6 +28,7 @@ class AXInterface {
   enum ElementType {
     case chrome
     case scrollContainer
+    case scrollBar
     case regular
   }
 
@@ -84,6 +86,13 @@ class AXInterface {
     // Always push to hierarchy
     currentHierarchy.append(element)
 
+    // Check if this is a scroll bar element
+    if let role = role, role == "AXScrollBar" {
+      isInScrollBar = true
+      debugLog("Entered scroll bar element")
+      return .scrollBar
+    }
+
     // Check if this is a chrome element
     if let role = role, isChrome(element, role) {
       if let position = position, let size = size {
@@ -116,6 +125,8 @@ class AXInterface {
 
     // Pop from specific stacks based on element type
     switch type {
+    case .scrollBar:
+      isInScrollBar = false
     case .chrome:
       if !chromeAreas.isEmpty {
         chromeAreas.removeLast()
@@ -227,6 +238,21 @@ class AXInterface {
     // If we're in chrome, skip processing this element's clickability
     // but still traverse children in case there's content below
     guard !currentIsInChrome else {
+      processChildren(
+        of: element,
+        allScreenBounds: allScreenBounds,
+        windowFrame: windowFrame,
+        roleStats: &roleStats,
+        elementCount: &elementCount,
+        clickableElements: &clickableElements,
+        depth: depth
+      )
+      return
+    }
+
+    // If we're in a scroll bar, skip processing this element's clickability
+    // but still traverse children
+    guard !isInScrollBar else {
       processChildren(
         of: element,
         allScreenBounds: allScreenBounds,
