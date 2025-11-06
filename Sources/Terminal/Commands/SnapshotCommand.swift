@@ -30,7 +30,7 @@ struct SnapshotCommand: ParsableCommand {
     name: .shortAndLong, help: "Filter attributes (comma-separated list, e.g., 'AXRole,AXTitle')")
   var attributes: String?
 
-  @Flag(name: .shortAndLong, help: "Include all ~110 standard attributes in output")
+  @Flag(name: .long, help: "Include all ~110 standard attributes in output")
   var full: Bool = false
 
   @Flag(name: .shortAndLong, help: "Include timing information")
@@ -430,11 +430,19 @@ struct SnapshotCommand: ParsableCommand {
     let metadata: AXSnapshot.SnapshotMetadata
   }
 
+  private struct JsonReference: Codable {
+    let ref: String
+
+    enum CodingKeys: String, CodingKey {
+      case ref = "$ref"
+    }
+  }
+
   private struct EnrichedNode: Codable {
     let id: String
-    let parent: AXSnapshotReference?
-    let prevSibling: AXSnapshotReference?
-    let nextSibling: AXSnapshotReference?
+    let parent: JsonReference?
+    let prevSibling: JsonReference?
+    let nextSibling: JsonReference?
     let children: [EnrichedNode]
 
     let attributes: [String: AXSnapshotValue]
@@ -456,7 +464,8 @@ struct SnapshotCommand: ParsableCommand {
     }
 
     enum CodingKeys: String, CodingKey {
-      case id, parent, prevSibling, nextSibling, children
+      case id = "$id"
+      case parent, prevSibling, nextSibling, children
       case attributes, parameterizedAttributes, actions
       case position, size, zIndex, timing
     }
@@ -536,9 +545,9 @@ struct SnapshotCommand: ParsableCommand {
 
     return EnrichedNode(
       id: node.id,
-      parent: node.parent.map { AXSnapshotReference(id: $0.id) },
-      prevSibling: node.prevSibling.map { AXSnapshotReference(id: $0.id) },
-      nextSibling: node.nextSibling.map { AXSnapshotReference(id: $0.id) },
+      parent: node.parent.map { JsonReference(ref: $0.id) },
+      prevSibling: node.prevSibling.map { JsonReference(ref: $0.id) },
+      nextSibling: node.nextSibling.map { JsonReference(ref: $0.id) },
       children: enrichedChildren,
       attributes: attrs,
       parameterizedAttributes: node.parameterizedAttributes,
@@ -554,9 +563,9 @@ struct SnapshotCommand: ParsableCommand {
 
   private struct FlatJsonNode: Codable {
     let id: String
-    let parentId: String?
-    let prevSiblingId: String?
-    let nextSiblingId: String?
+    let parent: JsonReference?
+    let prevSibling: JsonReference?
+    let nextSibling: JsonReference?
     let attributes: [String: AXSnapshotValue]
     let parameterizedAttributes: [String]
     let actions: [AXSnapshotAction]
@@ -565,7 +574,8 @@ struct SnapshotCommand: ParsableCommand {
     let zIndex: Int?
 
     enum CodingKeys: String, CodingKey {
-      case id, parentId, prevSiblingId, nextSiblingId
+      case id = "$id"
+      case parent, prevSibling, nextSibling
       case attributes, parameterizedAttributes, actions
       case position, size, zIndex
     }
@@ -573,9 +583,9 @@ struct SnapshotCommand: ParsableCommand {
     func encode(to encoder: Encoder) throws {
       var container = encoder.container(keyedBy: CodingKeys.self)
       try container.encode(id, forKey: .id)
-      try container.encodeIfPresent(parentId, forKey: .parentId)
-      try container.encodeIfPresent(prevSiblingId, forKey: .prevSiblingId)
-      try container.encodeIfPresent(nextSiblingId, forKey: .nextSiblingId)
+      try container.encodeIfPresent(parent, forKey: .parent)
+      try container.encodeIfPresent(prevSibling, forKey: .prevSibling)
+      try container.encodeIfPresent(nextSibling, forKey: .nextSibling)
       try container.encode(attributes, forKey: .attributes)
       try container.encode(parameterizedAttributes, forKey: .parameterizedAttributes)
       try container.encode(actions, forKey: .actions)
@@ -609,9 +619,9 @@ struct SnapshotCommand: ParsableCommand {
 
     let flatNode = FlatJsonNode(
       id: node.id,
-      parentId: node.parent?.id,
-      prevSiblingId: node.prevSibling?.id,
-      nextSiblingId: node.nextSibling?.id,
+      parent: node.parent.map { JsonReference(ref: $0.id) },
+      prevSibling: node.prevSibling.map { JsonReference(ref: $0.id) },
+      nextSibling: node.nextSibling.map { JsonReference(ref: $0.id) },
       attributes: attrs,
       parameterizedAttributes: node.parameterizedAttributes,
       actions: node.actions,
