@@ -36,6 +36,9 @@ struct SnapshotCommand: ParsableCommand {
   @Flag(name: .shortAndLong, help: "Include timing information")
   var timing: Bool = false
 
+  @Flag(name: .long, help: "Traverse all windows (default: only frontmost window)")
+  var allWindows: Bool = false
+
   enum OutputFormat: String, ExpressibleByArgument {
     case text
     case json
@@ -51,11 +54,35 @@ struct SnapshotCommand: ParsableCommand {
 
     let appElement = AXUIElementCreateApplication(frontmostApp.processIdentifier)
 
+    // Determine root element: use focused window by default, or app element if --all-windows
+    let rootElement: AXUIElement
+    let scopeDescription: String
+    
+    if allWindows {
+      rootElement = appElement
+      scopeDescription = "all windows"
+    } else {
+      // Get the focused window using Accessibility API directly
+      var focusedWindowValue: AnyObject?
+      let result = AXUIElementCopyAttributeValue(
+        appElement, kAXFocusedWindowAttribute as CFString, &focusedWindowValue)
+      
+      guard result == .success,
+        let windowValue = focusedWindowValue,
+        CFGetTypeID(windowValue as CFTypeRef) == AXUIElementGetTypeID()
+      else {
+        throw ValidationError("No focused window found")
+      }
+      rootElement = (windowValue as! AXUIElement)
+      scopeDescription = "frontmost window"
+    }
+
     // Parse attribute filter
     let attributeFilter = parseAttributeFilter()
 
     print("=== Accessibility Tree Snapshot ===")
     print("Application: \(frontmostApp.localizedName ?? "Unknown")")
+    print("Scope: \(scopeDescription)")
     print("Timestamp: \(formatDate(Date()))")
     print()
 
@@ -74,7 +101,7 @@ struct SnapshotCommand: ParsableCommand {
 
     var isFirstJsonNode = true
 
-    let _ = AXSnapshot.snapshot(root: appElement) { nodeId, count, node in
+    let _ = AXSnapshot.snapshot(root: rootElement) { nodeId, count, node in
       nodeCount = count
 
       if format == .text {
