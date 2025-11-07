@@ -42,9 +42,8 @@ public final class AXSnapshotNode: Codable {
   public let parameterizedAttributes: [String]
   public let actions: [AXSnapshotAction]
 
-  // Extracted geometry/position info
-  public let position: CGPoint?
-  public let size: CGSize?
+  // Extracted geometry info
+  public let bounds: CGRect?
   public let zIndex: Int?
 
   public init(
@@ -56,8 +55,7 @@ public final class AXSnapshotNode: Codable {
     attributes: [String: AXSnapshotValue],
     parameterizedAttributes: [String],
     actions: [AXSnapshotAction],
-    position: CGPoint?,
-    size: CGSize?,
+    bounds: CGRect?,
     zIndex: Int?
   ) {
     self.id = id
@@ -68,8 +66,7 @@ public final class AXSnapshotNode: Codable {
     self.attributes = attributes
     self.parameterizedAttributes = parameterizedAttributes
     self.actions = actions
-    self.position = position
-    self.size = size
+    self.bounds = bounds
     self.zIndex = zIndex
   }
 }
@@ -82,6 +79,10 @@ public struct AXSnapshotReference: Codable {
 
   public init(id: String) {
     self.id = id
+  }
+
+  enum CodingKeys: String, CodingKey {
+    case id = "@id"
   }
 }
 
@@ -111,11 +112,13 @@ public enum AXSnapshotValue: Codable {
   case data(String)  // base64 encoded
   case array([AXSnapshotValue])
   case dictionary([String: AXSnapshotValue])
-  case point(x: Double, y: Double)
-  case size(width: Double, height: Double)
-  case rect(x: Double, y: Double, width: Double, height: Double)
-  case range(location: Int, length: Int)
+  case cgPoint(x: Double, y: Double)
+  case cgSize(width: Double, height: Double)
+  case cgRect(x: Double, y: Double, width: Double, height: Double)
+  case cfRange(location: Int, length: Int)
   case elementReference(String)  // reference to another element by id
+  case attributedString(String)  // NSAttributedString description
+  case cgPath(String)  // CGPath description
   case unknown(String)  // fallback description
 }
 
@@ -176,9 +179,36 @@ class TimingRecorder {
 // MARK: - Geometry Info
 
 struct GeometryInfo {
-  let position: CGPoint?
-  let size: CGSize?
+  let bounds: CGRect?
   let zIndex: Int?
+}
+
+// MARK: - AXElementIdRegistry
+
+/// Maintains stable IDs for AXUIElements encountered during snapshot collection
+final class AXElementIdRegistry {
+  private var entries: [(element: AXUIElement, id: String)] = []
+
+  func register(_ element: AXUIElement, id: String) {
+    // Avoid duplicate registrations when the element is already present
+    if lookup(element) != nil {
+      return
+    }
+    entries.append((element: element, id: id))
+  }
+
+  func registerAlias(_ element: AXUIElement, id: String) {
+    entries.append((element: element, id: id))
+  }
+
+  func lookup(_ element: AXUIElement) -> String? {
+    for entry in entries {
+      if CFEqual(entry.element, element) {
+        return entry.id
+      }
+    }
+    return nil
+  }
 }
 
 // MARK: - Snapshot Generation
@@ -193,10 +223,48 @@ extension AXSnapshot {
     progressCallback: ((String, Int, MutableNode) -> Void)? = nil
   ) -> AXSnapshot {
     let tree = AXTree(root: root)
+    let timings = TimingRecorder()
+    let elementIdRegistry = AXElementIdRegistry()
+
+    // PASS 1: Build complete element-to-ID map
+    var idStack: [String] = []
+    var siblingCountStack: [Int] = [0]
+
+    tree.traverse { element, depth in
+      // Adjust ID stack to match current depth (path to current node)
+      while idStack.count > depth {
+        idStack.removeLast()
+      }
+
+      // Adjust sibling count stack - keep counts for all depths we've seen
+      // But reset counts for depths deeper than current + 1
+      while siblingCountStack.count > depth + 1 {
+        siblingCountStack.removeLast()
+      }
+
+      // Ensure sibling count stack has an entry for this depth
+      while siblingCountStack.count <= depth {
+        siblingCountStack.append(0)
+      }
+
+      let siblingIndex = siblingCountStack[depth]
+      let parentId = idStack.last
+      let nodeId = composeId(parentId: parentId, index: siblingIndex)
+
+      // Register this element's ID in the map
+      elementIdRegistry.register(element, id: nodeId)
+
+      // Update stacks
+      idStack.append(nodeId)
+      siblingCountStack[depth] += 1
+
+      return .continue
+    }
+
+    // PASS 2: Collect attributes and build tree structure
     var nodeStack: [MutableNode] = []
     var siblingStack: [[MutableNode]] = [[]]
     var rootNode: MutableNode?
-    let timings = TimingRecorder()
     var nodeCount = 0
 
     tree.traverse { element, depth in
@@ -217,7 +285,7 @@ extension AXSnapshot {
 
       // Collect data with timing
       let attributes = timings.measure("attributes", nodeId) {
-        collectAttributes(element: element)
+        collectAttributes(element: element, elementIdRegistry: elementIdRegistry)
       }
 
       let parameterized = timings.measure("parameterized", nodeId) {
@@ -241,8 +309,7 @@ extension AXSnapshot {
         attributes: attributes,
         parameterizedAttributes: parameterized,
         actions: actions,
-        position: geometry.position,
-        size: geometry.size,
+        bounds: geometry.bounds,
         zIndex: geometry.zIndex
       )
 
@@ -304,8 +371,7 @@ public class MutableNode {
   public let attributes: [String: AXSnapshotValue]
   public let parameterizedAttributes: [String]
   public let actions: [AXSnapshotAction]
-  public let position: CGPoint?
-  public let size: CGSize?
+  public let bounds: CGRect?
   public let zIndex: Int?
 
   public init(
@@ -315,8 +381,7 @@ public class MutableNode {
     attributes: [String: AXSnapshotValue],
     parameterizedAttributes: [String],
     actions: [AXSnapshotAction],
-    position: CGPoint?,
-    size: CGSize?,
+    bounds: CGRect?,
     zIndex: Int?
   ) {
     self.id = id
@@ -325,8 +390,7 @@ public class MutableNode {
     self.attributes = attributes
     self.parameterizedAttributes = parameterizedAttributes
     self.actions = actions
-    self.position = position
-    self.size = size
+    self.bounds = bounds
     self.zIndex = zIndex
   }
 
@@ -346,8 +410,7 @@ public class MutableNode {
       attributes: attributes,
       parameterizedAttributes: parameterizedAttributes,
       actions: actions,
-      position: position,
-      size: size,
+      bounds: bounds,
       zIndex: zIndex
     )
 
@@ -382,12 +445,14 @@ private func composeId(parentId: String?, index: Int) -> String {
   if let parentId = parentId {
     return "\(parentId)-\(index)"
   } else {
-    return "0"
+    return "#0"
   }
 }
 
 /// Collects all attributes from an element
-private func collectAttributes(element: AXUIElement) -> [String: AXSnapshotValue] {
+private func collectAttributes(element: AXUIElement, elementIdRegistry: AXElementIdRegistry)
+  -> [String: AXSnapshotValue]
+{
   var result: [String: AXSnapshotValue] = [:]
 
   // Get the list of attributes this element actually has
@@ -404,7 +469,7 @@ private func collectAttributes(element: AXUIElement) -> [String: AXSnapshotValue
     if AXUIElementCopyAttributeValue(element, name as CFString, &value) == .success,
       let val = value
     {
-      result[name] = convertValue(val)
+      result[name] = convertValue(val, elementIdRegistry: elementIdRegistry)
     }
   }
 
@@ -423,7 +488,7 @@ private func collectAttributes(element: AXUIElement) -> [String: AXSnapshotValue
     if AXUIElementCopyAttributeValue(element, attrName as CFString, &value) == .success,
       let val = value
     {
-      result[attrName] = convertValue(val)
+      result[attrName] = convertValue(val, elementIdRegistry: elementIdRegistry)
     }
   }
 
@@ -641,18 +706,14 @@ private func collectGeometry(
   attributes: [String: AXSnapshotValue],
   element: AXUIElement
 ) -> GeometryInfo {
-  var position: CGPoint?
-  var size: CGSize?
+  var bounds: CGRect?
   var zIndex: Int?
 
-  // Extract position from attributes
-  if case .point(let x, let y) = attributes[kAXPositionAttribute] {
-    position = CGPoint(x: x, y: y)
-  }
-
-  // Extract size from attributes
-  if case .size(let width, let height) = attributes[kAXSizeAttribute] {
-    size = CGSize(width: width, height: height)
+  // Extract position and size from attributes
+  if case .cgPoint(let x, let y) = attributes[kAXPositionAttribute],
+    case .cgSize(let width, let height) = attributes[kAXSizeAttribute]
+  {
+    bounds = CGRect(x: x, y: y, width: width, height: height)
   }
 
   // Try to get z-index (may not always be available)
@@ -661,11 +722,13 @@ private func collectGeometry(
     zIndex = Int(z)
   }
 
-  return GeometryInfo(position: position, size: size, zIndex: zIndex)
+  return GeometryInfo(bounds: bounds, zIndex: zIndex)
 }
 
 /// Converts an AnyObject value to AXSnapshotValue
-private func convertValue(_ value: AnyObject) -> AXSnapshotValue {
+private func convertValue(_ value: AnyObject, elementIdRegistry: AXElementIdRegistry)
+  -> AXSnapshotValue
+{
   // Handle nil
   if value is NSNull {
     return .null
@@ -710,23 +773,23 @@ private func convertValue(_ value: AnyObject) -> AXSnapshotValue {
     case .cgPoint:
       var point = CGPoint.zero
       if AXValueGetValue(axValue, .cgPoint, &point) {
-        return .point(x: point.x, y: point.y)
+        return .cgPoint(x: point.x, y: point.y)
       }
     case .cgSize:
       var size = CGSize.zero
       if AXValueGetValue(axValue, .cgSize, &size) {
-        return .size(width: size.width, height: size.height)
+        return .cgSize(width: size.width, height: size.height)
       }
     case .cgRect:
       var rect = CGRect.zero
       if AXValueGetValue(axValue, .cgRect, &rect) {
-        return .rect(
+        return .cgRect(
           x: rect.origin.x, y: rect.origin.y, width: rect.width, height: rect.height)
       }
     case .cfRange:
       var range = CFRange(location: 0, length: 0)
       if AXValueGetValue(axValue, .cfRange, &range) {
-        return .range(location: range.location, length: range.length)
+        return .cfRange(location: range.location, length: range.length)
       }
     default:
       break
@@ -735,14 +798,31 @@ private func convertValue(_ value: AnyObject) -> AXSnapshotValue {
 
   // Handle AXUIElement (nested element reference)
   if CFGetTypeID(value as CFTypeRef) == AXUIElementGetTypeID() {
-    // For now, just mark as element reference
-    // In a full implementation, we might want to track these and assign IDs
-    return .elementReference("nested-element")
+    let element = value as! AXUIElement
+
+    if let id = elementIdRegistry.lookup(element) {
+      // Register this particular reference to speed up future lookups
+      elementIdRegistry.registerAlias(element, id: id)
+      return .elementReference(id)
+    } else {
+      return .elementReference("external-element")
+    }
+  }
+
+  // Handle NSAttributedString
+  if let attrString = value as? NSAttributedString {
+    return .attributedString(attrString.description)
+  }
+
+  // Handle CGPath
+  if CFGetTypeID(value as CFTypeRef) == CGPath.typeID {
+    let path = value as! CGPath
+    return .cgPath(String(describing: path))
   }
 
   // Handle Array
   if let array = value as? [AnyObject] {
-    return .array(array.map { convertValue($0) })
+    return .array(array.map { convertValue($0, elementIdRegistry: elementIdRegistry) })
   }
 
   // Handle Dictionary
@@ -750,7 +830,7 @@ private func convertValue(_ value: AnyObject) -> AXSnapshotValue {
     var result: [String: AXSnapshotValue] = [:]
     for (key, val) in dict {
       if let keyStr = key as? String {
-        result[keyStr] = convertValue(val)
+        result[keyStr] = convertValue(val, elementIdRegistry: elementIdRegistry)
       }
     }
     return .dictionary(result)

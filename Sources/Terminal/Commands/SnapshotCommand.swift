@@ -93,9 +93,9 @@ struct SnapshotCommand: ParsableCommand {
         }
 
         // Print geometry if available
-        if let pos = node.position, let size = node.size {
+        if let bounds = node.bounds {
           print(
-            "\(prefix)  @ (\(Int(pos.x)), \(Int(pos.y))) \(Int(size.width))×\(Int(size.height))",
+            "\(prefix)  @ (\(Int(bounds.origin.x)), \(Int(bounds.origin.y))) \(Int(bounds.width))×\(Int(bounds.height))",
             terminator: "")
           if let z = node.zIndex {
             print(" z:\(z)")
@@ -215,9 +215,9 @@ struct SnapshotCommand: ParsableCommand {
     print()
 
     // Print geometry if available
-    if let pos = node.position, let size = node.size {
+    if let bounds = node.bounds {
       print(
-        "\(prefix)  @ (\(Int(pos.x)), \(Int(pos.y))) \(Int(size.width))×\(Int(size.height))",
+        "\(prefix)  @ (\(Int(bounds.origin.x)), \(Int(bounds.origin.y))) \(Int(bounds.width))×\(Int(bounds.height))",
         terminator: "")
       if let z = node.zIndex {
         print(" z:\(z)", terminator: "")
@@ -398,8 +398,7 @@ struct SnapshotCommand: ParsableCommand {
       attributes: filteredAttributes,
       parameterizedAttributes: node.parameterizedAttributes,
       actions: node.actions,
-      position: node.position,
-      size: node.size,
+      bounds: node.bounds,
       zIndex: node.zIndex
     )
 
@@ -434,7 +433,7 @@ struct SnapshotCommand: ParsableCommand {
     let ref: String
 
     enum CodingKeys: String, CodingKey {
-      case ref = "$ref"
+      case ref = "@id"
     }
   }
 
@@ -449,8 +448,7 @@ struct SnapshotCommand: ParsableCommand {
     let parameterizedAttributes: [String]
     let actions: [AXSnapshotAction]
 
-    let position: CGPoint?
-    let size: CGSize?
+    let bounds: CGRect?
     let zIndex: Int?
 
     let timing: TimingInfo?
@@ -464,10 +462,10 @@ struct SnapshotCommand: ParsableCommand {
     }
 
     enum CodingKeys: String, CodingKey {
-      case id = "$id"
+      case id = "@id"
       case parent, prevSibling, nextSibling, children
       case attributes, parameterizedAttributes, actions
-      case position, size, zIndex, timing
+      case bounds, zIndex, timing
     }
 
     func encode(to encoder: Encoder) throws {
@@ -481,19 +479,14 @@ struct SnapshotCommand: ParsableCommand {
       try container.encode(parameterizedAttributes, forKey: .parameterizedAttributes)
       try container.encode(actions, forKey: .actions)
 
-      // Encode geometry as nested objects
-      if let position = position {
-        var posDict: [String: Double] = [:]
-        posDict["x"] = position.x
-        posDict["y"] = position.y
-        try container.encode(posDict, forKey: .position)
-      }
-
-      if let size = size {
-        var sizeDict: [String: Double] = [:]
-        sizeDict["width"] = size.width
-        sizeDict["height"] = size.height
-        try container.encode(sizeDict, forKey: .size)
+      // Encode bounds as nested object
+      if let bounds = bounds {
+        var boundsDict: [String: Double] = [:]
+        boundsDict["x"] = bounds.origin.x
+        boundsDict["y"] = bounds.origin.y
+        boundsDict["width"] = bounds.width
+        boundsDict["height"] = bounds.height
+        try container.encode(boundsDict, forKey: .bounds)
       }
 
       try container.encodeIfPresent(zIndex, forKey: .zIndex)
@@ -552,8 +545,7 @@ struct SnapshotCommand: ParsableCommand {
       attributes: attrs,
       parameterizedAttributes: node.parameterizedAttributes,
       actions: node.actions,
-      position: node.position,
-      size: node.size,
+      bounds: node.bounds,
       zIndex: node.zIndex,
       timing: timingInfo
     )
@@ -569,15 +561,14 @@ struct SnapshotCommand: ParsableCommand {
     let attributes: [String: AXSnapshotValue]
     let parameterizedAttributes: [String]
     let actions: [AXSnapshotAction]
-    let position: CGPoint?
-    let size: CGSize?
+    let bounds: CGRect?
     let zIndex: Int?
 
     enum CodingKeys: String, CodingKey {
-      case id = "$id"
+      case id = "@id"
       case parent, prevSibling, nextSibling
       case attributes, parameterizedAttributes, actions
-      case position, size, zIndex
+      case bounds, zIndex
     }
 
     func encode(to encoder: Encoder) throws {
@@ -590,18 +581,13 @@ struct SnapshotCommand: ParsableCommand {
       try container.encode(parameterizedAttributes, forKey: .parameterizedAttributes)
       try container.encode(actions, forKey: .actions)
 
-      if let position = position {
-        var posDict: [String: Double] = [:]
-        posDict["x"] = position.x
-        posDict["y"] = position.y
-        try container.encode(posDict, forKey: .position)
-      }
-
-      if let size = size {
-        var sizeDict: [String: Double] = [:]
-        sizeDict["width"] = size.width
-        sizeDict["height"] = size.height
-        try container.encode(sizeDict, forKey: .size)
+      if let bounds = bounds {
+        var boundsDict: [String: Double] = [:]
+        boundsDict["x"] = bounds.origin.x
+        boundsDict["y"] = bounds.origin.y
+        boundsDict["width"] = bounds.width
+        boundsDict["height"] = bounds.height
+        try container.encode(boundsDict, forKey: .bounds)
       }
 
       try container.encodeIfPresent(zIndex, forKey: .zIndex)
@@ -625,8 +611,7 @@ struct SnapshotCommand: ParsableCommand {
       attributes: attrs,
       parameterizedAttributes: node.parameterizedAttributes,
       actions: node.actions,
-      position: node.position,
-      size: node.size,
+      bounds: node.bounds,
       zIndex: node.zIndex
     )
 
@@ -678,16 +663,20 @@ struct SnapshotCommand: ParsableCommand {
       return "[\(arr.count) items]"
     case .dictionary(let dict):
       return "{\(dict.count) keys}"
-    case .point(let x, let y):
+    case .cgPoint(let x, let y):
       return "(\(Int(x)), \(Int(y)))"
-    case .size(let w, let h):
+    case .cgSize(let w, let h):
       return "\(Int(w))×\(Int(h))"
-    case .rect(let x, let y, let w, let h):
+    case .cgRect(let x, let y, let w, let h):
       return "(\(Int(x)), \(Int(y))) \(Int(w))×\(Int(h))"
-    case .range(let loc, let len):
+    case .cfRange(let loc, let len):
       return "[\(loc):\(len)]"
     case .elementReference(let ref):
       return "ref(\(ref))"
+    case .attributedString(let desc):
+      return "attributedString(\(desc.prefix(50))...)"
+    case .cgPath(let desc):
+      return "cgPath(\(desc.prefix(50))...)"
     case .unknown(let desc):
       return "unknown(\(desc))"
     }

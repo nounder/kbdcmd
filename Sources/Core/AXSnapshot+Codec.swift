@@ -5,16 +5,17 @@ import Foundation
 
 extension AXSnapshotNode {
   enum CodingKeys: String, CodingKey {
-    case id, parent, prevSibling, nextSibling, children
+    case id = "@id"
+    case parent, prevSibling, nextSibling, children
     case attributes, parameterizedAttributes, actions
-    case position, size, zIndex
+    case bounds, zIndex
   }
 
   public func encode(to encoder: Encoder) throws {
     var container = encoder.container(keyedBy: CodingKeys.self)
     try container.encode(id, forKey: .id)
 
-    // Encode references as { "id": "..." } objects
+    // Encode references as { "@id": "..." } objects
     if let parent = parent {
       try container.encode(AXSnapshotReference(id: parent.id), forKey: .parent)
     }
@@ -32,19 +33,14 @@ extension AXSnapshotNode {
     try container.encode(parameterizedAttributes, forKey: .parameterizedAttributes)
     try container.encode(actions, forKey: .actions)
 
-    // Encode geometry as nested objects for cleaner JSON
-    if let position = position {
-      var posDict: [String: Double] = [:]
-      posDict["x"] = position.x
-      posDict["y"] = position.y
-      try container.encode(posDict, forKey: .position)
-    }
-
-    if let size = size {
-      var sizeDict: [String: Double] = [:]
-      sizeDict["width"] = size.width
-      sizeDict["height"] = size.height
-      try container.encode(sizeDict, forKey: .size)
+    // Encode bounds as nested object
+    if let bounds = bounds {
+      var boundsDict: [String: Double] = [:]
+      boundsDict["x"] = bounds.origin.x
+      boundsDict["y"] = bounds.origin.y
+      boundsDict["width"] = bounds.width
+      boundsDict["height"] = bounds.height
+      try container.encode(boundsDict, forKey: .bounds)
     }
 
     try container.encodeIfPresent(zIndex, forKey: .zIndex)
@@ -59,19 +55,17 @@ extension AXSnapshotNode {
       [String].self, forKey: .parameterizedAttributes)
     let actions = try container.decode([AXSnapshotAction].self, forKey: .actions)
 
-    // Decode geometry
-    let position: CGPoint?
-    if let posDict = try container.decodeIfPresent([String: Double].self, forKey: .position) {
-      position = CGPoint(x: posDict["x"] ?? 0, y: posDict["y"] ?? 0)
+    // Decode bounds
+    let bounds: CGRect?
+    if let boundsDict = try container.decodeIfPresent([String: Double].self, forKey: .bounds) {
+      bounds = CGRect(
+        x: boundsDict["x"] ?? 0,
+        y: boundsDict["y"] ?? 0,
+        width: boundsDict["width"] ?? 0,
+        height: boundsDict["height"] ?? 0
+      )
     } else {
-      position = nil
-    }
-
-    let size: CGSize?
-    if let sizeDict = try container.decodeIfPresent([String: Double].self, forKey: .size) {
-      size = CGSize(width: sizeDict["width"] ?? 0, height: sizeDict["height"] ?? 0)
-    } else {
-      size = nil
+      bounds = nil
     }
 
     let zIndex = try container.decodeIfPresent(Int.self, forKey: .zIndex)
@@ -85,8 +79,7 @@ extension AXSnapshotNode {
       attributes: attributes,
       parameterizedAttributes: parameterizedAttributes,
       actions: actions,
-      position: position,
-      size: size,
+      bounds: bounds,
       zIndex: zIndex
     )
   }
@@ -94,122 +87,237 @@ extension AXSnapshotNode {
 
 // MARK: - AXSnapshotValue Codable
 
-extension AXSnapshotValue {
+// Helper wrappers for encoding flat specialized types
+private struct TypedValue: Encodable {
+  let type: String
+  let value: String
+
   enum CodingKeys: String, CodingKey {
-    case type, value
+    case type = "@type"
+    case value
   }
+}
 
+private struct CGPointValue: Encodable {
+  let type: String
+  let x: Double
+  let y: Double
+
+  enum CodingKeys: String, CodingKey {
+    case type = "@type"
+    case x, y
+  }
+}
+
+private struct CGSizeValue: Encodable {
+  let type: String
+  let width: Double
+  let height: Double
+
+  enum CodingKeys: String, CodingKey {
+    case type = "@type"
+    case width, height
+  }
+}
+
+private struct CGRectValue: Encodable {
+  let type: String
+  let x: Double
+  let y: Double
+  let width: Double
+  let height: Double
+
+  enum CodingKeys: String, CodingKey {
+    case type = "@type"
+    case x, y, width, height
+  }
+}
+
+private struct CFRangeValue: Encodable {
+  let type: String
+  let location: Int
+  let length: Int
+
+  enum CodingKeys: String, CodingKey {
+    case type = "@type"
+    case location, length
+  }
+}
+
+extension AXSnapshotValue {
   public func encode(to encoder: Encoder) throws {
-    var container = encoder.container(keyedBy: CodingKeys.self)
-
     switch self {
-    case .string(let s):
-      try container.encode("string", forKey: .type)
-      try container.encode(s, forKey: .value)
-    case .number(let n):
-      try container.encode("number", forKey: .type)
-      try container.encode(n, forKey: .value)
-    case .bool(let b):
-      try container.encode("bool", forKey: .type)
-      try container.encode(b, forKey: .value)
+    case .string(let value):
+      var container = encoder.singleValueContainer()
+      try container.encode(value)
+    case .number(let value):
+      var container = encoder.singleValueContainer()
+      try container.encode(value)
+    case .bool(let value):
+      var container = encoder.singleValueContainer()
+      try container.encode(value)
     case .null:
-      try container.encode("null", forKey: .type)
-    case .url(let u):
-      try container.encode("url", forKey: .type)
-      try container.encode(u, forKey: .value)
-    case .date(let d):
-      try container.encode("date", forKey: .type)
-      try container.encode(d, forKey: .value)
-    case .data(let d):
-      try container.encode("data", forKey: .type)
-      try container.encode(d, forKey: .value)
-    case .array(let arr):
-      try container.encode("array", forKey: .type)
-      try container.encode(arr, forKey: .value)
-    case .dictionary(let dict):
-      try container.encode("dictionary", forKey: .type)
-      try container.encode(dict, forKey: .value)
-    case .point(let x, let y):
-      try container.encode("point", forKey: .type)
-      var pointDict: [String: Double] = [:]
-      pointDict["x"] = x
-      pointDict["y"] = y
-      try container.encode(pointDict, forKey: .value)
-    case .size(let width, let height):
-      try container.encode("size", forKey: .type)
-      var sizeDict: [String: Double] = [:]
-      sizeDict["width"] = width
-      sizeDict["height"] = height
-      try container.encode(sizeDict, forKey: .value)
-    case .rect(let x, let y, let width, let height):
-      try container.encode("rect", forKey: .type)
-      var rectDict: [String: Double] = [:]
-      rectDict["x"] = x
-      rectDict["y"] = y
-      rectDict["width"] = width
-      rectDict["height"] = height
-      try container.encode(rectDict, forKey: .value)
-    case .range(let location, let length):
-      try container.encode("range", forKey: .type)
-      var rangeDict: [String: Int] = [:]
-      rangeDict["location"] = location
-      rangeDict["length"] = length
-      try container.encode(rangeDict, forKey: .value)
+      var container = encoder.singleValueContainer()
+      try container.encodeNil()
+    case .array(let value):
+      var container = encoder.singleValueContainer()
+      try container.encode(value)
+    case .dictionary(let value):
+      var container = encoder.singleValueContainer()
+      try container.encode(value)
     case .elementReference(let ref):
-      try container.encode("elementReference", forKey: .type)
-      try container.encode(ref, forKey: .value)
-    case .unknown(let desc):
-      try container.encode("unknown", forKey: .type)
-      try container.encode(desc, forKey: .value)
+      var container = encoder.singleValueContainer()
+      try container.encode(["@id": ref])
+    case .url(let string):
+      var container = encoder.singleValueContainer()
+      try container.encode(TypedValue(type: "url", value: string))
+    case .date(let string):
+      var container = encoder.singleValueContainer()
+      try container.encode(TypedValue(type: "date", value: string))
+    case .data(let base64):
+      var container = encoder.singleValueContainer()
+      try container.encode(TypedValue(type: "data", value: base64))
+    case .cgPoint(let x, let y):
+      var container = encoder.singleValueContainer()
+      try container.encode(CGPointValue(type: "CGPoint", x: x, y: y))
+    case .cgSize(let width, let height):
+      var container = encoder.singleValueContainer()
+      try container.encode(CGSizeValue(type: "CGSize", width: width, height: height))
+    case .cgRect(let x, let y, let width, let height):
+      var container = encoder.singleValueContainer()
+      try container.encode(CGRectValue(type: "CGRect", x: x, y: y, width: width, height: height))
+    case .cfRange(let location, let length):
+      var container = encoder.singleValueContainer()
+      try container.encode(CFRangeValue(type: "CFRange", location: location, length: length))
+    case .attributedString(let description):
+      var container = encoder.singleValueContainer()
+      try container.encode(TypedValue(type: "NSAttributedString", value: description))
+    case .cgPath(let description):
+      var container = encoder.singleValueContainer()
+      try container.encode(TypedValue(type: "CGPath", value: description))
+    case .unknown(let description):
+      var container = encoder.singleValueContainer()
+      try container.encode(TypedValue(type: "unknown", value: description))
     }
   }
 
   public init(from decoder: Decoder) throws {
-    let container = try decoder.container(keyedBy: CodingKeys.self)
-    let type = try container.decode(String.self, forKey: .type)
+    let singleValueContainer = try decoder.singleValueContainer()
 
-    switch type {
-    case "string":
-      self = .string(try container.decode(String.self, forKey: .value))
-    case "number":
-      self = .number(try container.decode(Double.self, forKey: .value))
-    case "bool":
-      self = .bool(try container.decode(Bool.self, forKey: .value))
-    case "null":
+    if singleValueContainer.decodeNil() {
       self = .null
+      return
+    }
+
+    if let bool = try? singleValueContainer.decode(Bool.self) {
+      self = .bool(bool)
+      return
+    }
+
+    if let number = try? singleValueContainer.decode(Double.self) {
+      self = .number(number)
+      return
+    }
+
+    if let string = try? singleValueContainer.decode(String.self) {
+      self = .string(string)
+      return
+    }
+
+    if let array = try? singleValueContainer.decode([AXSnapshotValue].self) {
+      self = .array(array)
+      return
+    }
+
+    if let dictionary = try? singleValueContainer.decode([String: AXSnapshotValue].self) {
+      if let decoded = AXSnapshotValue.decodeSpecialDictionary(dictionary) {
+        self = decoded
+        return
+      }
+
+      self = .dictionary(dictionary)
+      return
+    }
+
+    throw DecodingError.dataCorruptedError(
+      in: singleValueContainer,
+      debugDescription: "Unsupported AXSnapshotValue representation"
+    )
+  }
+
+  private static func decodeSpecialDictionary(_ dictionary: [String: AXSnapshotValue])
+    -> AXSnapshotValue?
+  {
+    // Handle @id format for element references
+    if dictionary.count == 1,
+      let refValue = dictionary["@id"],
+      case .string(let ref) = refValue
+    {
+      return .elementReference(ref)
+    }
+
+    // Handle @type format for specialized values
+    guard let typeValue = dictionary["@type"],
+      case .string(let typeString) = typeValue
+    else {
+      return nil
+    }
+
+    switch typeString {
     case "url":
-      self = .url(try container.decode(String.self, forKey: .value))
+      guard let value = dictionary["value"],
+        case .string(let string) = value
+      else { return nil }
+      return .url(string)
     case "date":
-      self = .date(try container.decode(String.self, forKey: .value))
+      guard let value = dictionary["value"],
+        case .string(let string) = value
+      else { return nil }
+      return .date(string)
     case "data":
-      self = .data(try container.decode(String.self, forKey: .value))
-    case "array":
-      self = .array(try container.decode([AXSnapshotValue].self, forKey: .value))
-    case "dictionary":
-      self = .dictionary(try container.decode([String: AXSnapshotValue].self, forKey: .value))
-    case "point":
-      let dict = try container.decode([String: Double].self, forKey: .value)
-      self = .point(x: dict["x"] ?? 0, y: dict["y"] ?? 0)
-    case "size":
-      let dict = try container.decode([String: Double].self, forKey: .value)
-      self = .size(width: dict["width"] ?? 0, height: dict["height"] ?? 0)
-    case "rect":
-      let dict = try container.decode([String: Double].self, forKey: .value)
-      self = .rect(
-        x: dict["x"] ?? 0,
-        y: dict["y"] ?? 0,
-        width: dict["width"] ?? 0,
-        height: dict["height"] ?? 0
-      )
-    case "range":
-      let dict = try container.decode([String: Int].self, forKey: .value)
-      self = .range(location: dict["location"] ?? 0, length: dict["length"] ?? 0)
-    case "elementReference":
-      self = .elementReference(try container.decode(String.self, forKey: .value))
+      guard let value = dictionary["value"],
+        case .string(let base64) = value
+      else { return nil }
+      return .data(base64)
+    case "CGPoint":
+      guard case .number(let x) = dictionary["x"],
+        case .number(let y) = dictionary["y"]
+      else { return nil }
+      return .cgPoint(x: x, y: y)
+    case "CGSize":
+      guard case .number(let width) = dictionary["width"],
+        case .number(let height) = dictionary["height"]
+      else { return nil }
+      return .cgSize(width: width, height: height)
+    case "CGRect":
+      guard case .number(let x) = dictionary["x"],
+        case .number(let y) = dictionary["y"],
+        case .number(let width) = dictionary["width"],
+        case .number(let height) = dictionary["height"]
+      else { return nil }
+      return .cgRect(x: x, y: y, width: width, height: height)
+    case "CFRange":
+      guard case .number(let location) = dictionary["location"],
+        case .number(let length) = dictionary["length"]
+      else { return nil }
+      return .cfRange(location: Int(location), length: Int(length))
+    case "NSAttributedString":
+      guard let value = dictionary["value"],
+        case .string(let description) = value
+      else { return nil }
+      return .attributedString(description)
+    case "CGPath":
+      guard let value = dictionary["value"],
+        case .string(let description) = value
+      else { return nil }
+      return .cgPath(description)
     case "unknown":
-      self = .unknown(try container.decode(String.self, forKey: .value))
+      guard let value = dictionary["value"],
+        case .string(let description) = value
+      else { return nil }
+      return .unknown(description)
     default:
-      self = .unknown("unknown type: \(type)")
+      return nil
     }
   }
 }
