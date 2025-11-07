@@ -39,6 +39,9 @@ struct SnapshotCommand: ParsableCommand {
   @Flag(name: .long, help: "Traverse all windows (default: only frontmost window)")
   var allWindows: Bool = false
 
+  @Flag(name: .long, help: "Interactively pick a window to snapshot")
+  var pickWindow: Bool = false
+
   enum OutputFormat: String, ExpressibleByArgument {
     case text
     case json
@@ -46,6 +49,12 @@ struct SnapshotCommand: ParsableCommand {
 
   func run() throws {
     try Permissions.checkAccessibility()
+
+    // If --pick-window is set, show interactive picker
+    if pickWindow {
+      try pickAndSnapshotWindow()
+      return
+    }
 
     // Get frontmost application
     guard let frontmostApp = NSWorkspace.shared.frontmostApplication else {
@@ -57,7 +66,7 @@ struct SnapshotCommand: ParsableCommand {
     // Determine root element: use focused window by default, or app element if --all-windows
     let rootElement: AXUIElement
     let scopeDescription: String
-    
+
     if allWindows {
       rootElement = appElement
       scopeDescription = "all windows"
@@ -66,7 +75,7 @@ struct SnapshotCommand: ParsableCommand {
       var focusedWindowValue: AnyObject?
       let result = AXUIElementCopyAttributeValue(
         appElement, kAXFocusedWindowAttribute as CFString, &focusedWindowValue)
-      
+
       guard result == .success,
         let windowValue = focusedWindowValue,
         CFGetTypeID(windowValue as CFTypeRef) == AXUIElementGetTypeID()
@@ -77,11 +86,67 @@ struct SnapshotCommand: ParsableCommand {
       scopeDescription = "frontmost window"
     }
 
+    performSnapshot(rootElement: rootElement, scopeDescription: scopeDescription)
+  }
+
+  private func pickAndSnapshotWindow() throws {
+    // Ensure we're on the main thread for UI operations
+    guard Thread.isMainThread else {
+      // Capture and propagate errors from the main thread dispatch
+      // Using try? would silently swallow errors, violating the throws contract
+      var capturedError: Error?
+      DispatchQueue.main.sync {
+        do {
+          try pickAndSnapshotWindow()
+        } catch {
+          capturedError = error
+        }
+      }
+      if let error = capturedError {
+        throw error
+      }
+      return
+    }
+
+    // Create an application instance for the run loop
+    let app = NSApplication.shared
+
+    var selectedWindowInfo: PickerWindowInfo?
+
+    let picker = WindowPicker()
+    picker.pickWindow { windowInfo in
+      selectedWindowInfo = windowInfo
+      app.stop(nil)
+    }
+
+    // Run the application event loop until picker completes
+    app.run()
+
+    guard let windowInfo = selectedWindowInfo else {
+      throw ValidationError("No window selected")
+    }
+
+    let rootElement: AXUIElement
+    if let axElement = windowInfo.axElement {
+      rootElement = axElement
+    } else if let fallback = WindowPicker.getAXWindow(from: windowInfo) {
+      rootElement = fallback
+    } else {
+      throw ValidationError("Could not access the selected window")
+    }
+
+    let appName = windowInfo.appName ?? "Unknown"
+    let windowTitle = windowInfo.title ?? "Untitled"
+    let scopeDescription = "\(appName) - \(windowTitle)"
+
+    performSnapshot(rootElement: rootElement, scopeDescription: scopeDescription)
+  }
+
+  private func performSnapshot(rootElement: AXUIElement, scopeDescription: String) {
     // Parse attribute filter
     let attributeFilter = parseAttributeFilter()
 
     print("=== Accessibility Tree Snapshot ===")
-    print("Application: \(frontmostApp.localizedName ?? "Unknown")")
     print("Scope: \(scopeDescription)")
     print("Timestamp: \(formatDate(Date()))")
     print()
