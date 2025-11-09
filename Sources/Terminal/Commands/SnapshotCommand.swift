@@ -42,6 +42,9 @@ struct SnapshotCommand: ParsableCommand {
   @Flag(name: .long, help: "Interactively pick a window to snapshot")
   var pickWindow: Bool = false
 
+  @Flag(name: .long, help: "Include parameterized attributes in output")
+  var parameterized: Bool = false
+
   enum OutputFormat: String, ExpressibleByArgument {
     case text
     case json
@@ -221,7 +224,7 @@ struct SnapshotCommand: ParsableCommand {
         }
 
         // Print parameterized attributes if any
-        if !node.parameterizedAttributes.isEmpty {
+        if parameterized && !node.parameterizedAttributes.isEmpty {
           let paramNames = node.parameterizedAttributes.joined(separator: ", ")
           print("\(prefix)  Parameterized: \(paramNames)")
         }
@@ -354,7 +357,7 @@ struct SnapshotCommand: ParsableCommand {
     }
 
     // Print parameterized attributes if any
-    if !node.parameterizedAttributes.isEmpty {
+    if parameterized && !node.parameterizedAttributes.isEmpty {
       let paramNames = node.parameterizedAttributes.joined(separator: ", ")
       print("\(prefix)  Parameterized: \(paramNames)")
     }
