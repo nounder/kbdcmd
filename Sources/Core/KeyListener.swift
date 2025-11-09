@@ -337,12 +337,19 @@ public class KeyListener {
       }
       // else: Caps Lock is mapped to a modifier - CG events already have correct flags, don't inject
 
+      // Another key pressed while holding right command - cancel overlay show
       if event.flags.contains(.maskCmdRight) {
-        // Another key pressed while holding right command - cancel overlay show
         Self.shared.cancelOverlayShow()
       }
 
-      return Self.shared.processKeyPress(key, flags: eventFlags)
+      Self.shared.processKeyPress(key, flags: eventFlags)
+
+      // always consume when rcmd is active.
+      // we're keeping this modifier for ourselves :3
+
+      if event.flags.contains(.maskCmdRight) {
+        return true
+      }
     }
 
     return false
