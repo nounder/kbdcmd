@@ -97,19 +97,20 @@ private class SequenceNode {
 
 public enum KeybindingAction: Equatable {
   case appActivation(appPath: String)
-  case windowActivation(windowId: CGWindowID, includeMinimized: Bool)
+  case windowActivation(windowId: CGWindowID, appPath: String, includeMinimized: Bool)
 }
 
 // MARK: - Persistence Model
 
-struct AppKeybinding: Codable {
+struct KeybindingItem: Codable {
   let letter: String
   let appPath: String
+  let windowId: CGWindowID?
 }
 
 struct KeybindingsFile: Codable {
   let version: Int
-  let items: [AppKeybinding]
+  let items: [KeybindingItem]
 }
 
 // MARK: - Keybindings Class
@@ -304,7 +305,7 @@ public class Keybindings {
     }
 
     // Clean up window observer if this letter was assigned to a window
-    if case .windowActivation(let windowId, _) = keybindings[upperLetter] {
+    if case .windowActivation(let windowId, _, _) = keybindings[upperLetter] {
       stopMonitoringWindow(windowId)
     }
 
@@ -349,15 +350,21 @@ public class Keybindings {
     debugLog(
       "Assigning window \(windowId) to key '\(upperLetter)', includeMinimized: \(includeMinimized)")
 
+    // Get the app path for this window
+    guard let appPath = getAppPathForWindow(windowId) else {
+      debugLog("Failed to get app path for window \(windowId)")
+      return
+    }
+
     // Clean up previous assignment if any
-    if case .windowActivation(let oldWindowId, _) = keybindings[upperLetter] {
+    if case .windowActivation(let oldWindowId, _, _) = keybindings[upperLetter] {
       stopMonitoringWindow(oldWindowId)
     }
 
     // Assign new keybinding
     keybindings[upperLetter] = .windowActivation(
-      windowId: windowId, includeMinimized: includeMinimized)
-    debugLog("Stored keybinding: \(upperLetter) -> window \(windowId)")
+      windowId: windowId, appPath: appPath, includeMinimized: includeMinimized)
+    debugLog("Stored keybinding: \(upperLetter) -> window \(windowId) in app \(appPath)")
 
     // Register the keybinding with right command
     register([KeyPress(key: .character(upperLetter), flags: .maskCmdRight)]) { [weak self] _ in
@@ -374,12 +381,31 @@ public class Keybindings {
     // Start monitoring this window for destruction
     startMonitoringWindow(windowId)
 
-    // Note: Window bindings are NOT saved to disk
+    // Save to disk (now includes window bindings)
+    saveKeybindings()
+  }
+
+  private func getAppPathForWindow(_ windowId: CGWindowID) -> String? {
+    let windowsInfo = CGWindowListCopyWindowInfo(
+      [.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID)
+
+    guard let windowList = windowsInfo as? [[String: Any]],
+          let windowDict = windowList.first(where: {
+            ($0[kCGWindowNumber as String] as? CGWindowID) == windowId
+          }),
+          let pid = windowDict[kCGWindowOwnerPID as String] as? pid_t,
+          let app = NSRunningApplication(processIdentifier: pid),
+          let bundleURL = app.bundleURL
+    else {
+      return nil
+    }
+    
+    return bundleURL.path
   }
 
   public func getKeybindingForWindow(_ windowId: CGWindowID) -> Character? {
     let result = keybindings.first {
-      if case .windowActivation(let id, _) = $0.value, id == windowId {
+      if case .windowActivation(let id, _, _) = $0.value, id == windowId {
         return true
       }
       return false
@@ -396,7 +422,7 @@ public class Keybindings {
     let upperLetter = Character(String(letter).uppercased())
 
     // Clean up window observer if this was a window keybinding
-    if case .windowActivation(let windowId, _) = keybindings[upperLetter] {
+    if case .windowActivation(let windowId, _, _) = keybindings[upperLetter] {
       stopMonitoringWindow(windowId)
     }
 
@@ -508,7 +534,7 @@ public class Keybindings {
 
     // Find and remove keybinding for this window
     if let letter = keybindings.first(where: {
-      if case .windowActivation(let id, _) = $0.value, id == windowId {
+      if case .windowActivation(let id, _, _) = $0.value, id == windowId {
         return true
       }
       return false
@@ -536,31 +562,60 @@ public class Keybindings {
       }
 
       // Restore keybindings
-      for binding in file.items {
-        guard let letter = binding.letter.first else { continue }
+      for item in file.items {
+        guard let letter = item.letter.first else { continue }
         let upperLetter = Character(String(letter).uppercased())
-        keybindings[upperLetter] = .appActivation(appPath: binding.appPath)
+        
+        if let windowId = item.windowId {
+          // This is a window keybinding
+          // Check if the window still exists before restoring the keybinding
+          if WindowManager.main.windowExists(windowId: windowId, appPath: item.appPath) {
+            keybindings[upperLetter] = .windowActivation(windowId: windowId, appPath: item.appPath, includeMinimized: true)
 
-        // Register the keybinding
-        register([KeyPress(key: .character(upperLetter), flags: .maskCmdRight)]) { _ in
-          _ = try? ApplicationManager.openOrFocus(binding.appPath)
+            // Register the keybinding
+            register([KeyPress(key: .character(upperLetter), flags: .maskCmdRight)]) { [weak self] _ in
+              guard let self = self else { return }
+              if !WindowManager.main.activateWindow(windowId: windowId, includeMinimized: true) {
+                // Window doesn't exist anymore, remove keybinding
+                self.removeKeybinding(forLetter: upperLetter)
+              }
+            }
+
+            // Start monitoring this window for destruction
+            startMonitoringWindow(windowId)
+          } else {
+            // Window doesn't exist anymore, skip this keybinding (it will be excluded from next save)
+            debugLog("Window \(windowId) no longer exists, skipping keybinding '\(upperLetter)'")
+          }
+        } else {
+          // This is an app keybinding
+          keybindings[upperLetter] = .appActivation(appPath: item.appPath)
+
+          // Register the keybinding
+          register([KeyPress(key: .character(upperLetter), flags: .maskCmdRight)]) { _ in
+            _ = try? ApplicationManager.openOrFocus(item.appPath)
+          }
         }
       }
+      
+      // Save keybindings to remove any windows that no longer exist
+      saveKeybindings()
     } catch {
       print("Failed to load keybindings: \(error)")
     }
   }
 
   private func saveKeybindings() {
-    // Only save app bindings, not window bindings
-    let bindings = keybindings.compactMap { letter, action -> AppKeybinding? in
-      if case .appActivation(let appPath) = action {
-        return AppKeybinding(letter: String(letter), appPath: appPath)
+    let items = keybindings.compactMap { letter, action -> KeybindingItem? in
+      switch action {
+      case .appActivation(let appPath):
+        return KeybindingItem(letter: String(letter), appPath: appPath, windowId: nil)
+      case .windowActivation(let windowId, let appPath, let includeMinimized):
+        return KeybindingItem(letter: String(letter), appPath: appPath, windowId: windowId)
       }
-      return nil
     }.sorted { $0.letter < $1.letter }
 
-    let file = KeybindingsFile(version: 1, items: bindings)
+    let file = KeybindingsFile(version: 1, items: items)
 
     do {
       let encoder = JSONEncoder()

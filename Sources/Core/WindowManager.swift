@@ -182,6 +182,40 @@ public class WindowManager {
     return key
   }
 
+  public func windowExists(windowId: CGWindowID) -> Bool {
+    let windowsInfo = CGWindowListCopyWindowInfo(
+      [.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID)
+    
+    guard let windowList = windowsInfo as? [[String: Any]] else {
+      return false
+    }
+    
+    return windowList.contains(where: {
+      ($0[kCGWindowNumber as String] as? CGWindowID) == windowId
+    })
+  }
+
+  public func windowExists(windowId: CGWindowID, appPath: String) -> Bool {
+    let windowsInfo = CGWindowListCopyWindowInfo(
+      [.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID)
+    
+    guard let windowList = windowsInfo as? [[String: Any]] else {
+      return false
+    }
+    
+    return windowList.contains(where: { windowDict in
+      guard let windowNumber = windowDict[kCGWindowNumber as String] as? CGWindowID,
+            let pid = windowDict[kCGWindowOwnerPID as String] as? pid_t,
+            let app = NSRunningApplication(processIdentifier: pid),
+            let bundleURL = app.bundleURL
+      else {
+        return false
+      }
+      
+      return windowNumber == windowId && bundleURL.path == appPath
+    })
+  }
+
   public func activateWindow(windowId: CGWindowID, includeMinimized: Bool = false) -> Bool {
     debugLog("Activating window \(windowId), includeMinimized: \(includeMinimized)")
 
