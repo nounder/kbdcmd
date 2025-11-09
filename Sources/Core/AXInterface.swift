@@ -9,6 +9,7 @@ struct ClickableElement: Identifiable {
   let title: String
   let role: String
   let isEnabled: Bool
+  let actions: [String]
 }
 
 /// Stateful interface for traversing accessibility tree with context tracking
@@ -275,8 +276,9 @@ class AXInterface {
     let isTextArea = role == "AXTextArea"
     let isPopUpButton = role == "AXPopUpButton"
     let isMenuItem = role == "AXMenuItem"
+    let isActionable = hasAction(element: element)
     // Check for AXGroup elements that have AXPress action (e.g., toolbar buttons in rich text editors)
-    let isClickableGroup = role == "AXGroup" && hasPressAction(element: element)
+    let isClickableGroup = role == "AXGroup" && isActionable
 
     // Debug logging for button detection
     if isButton {
@@ -306,7 +308,8 @@ class AXInterface {
 
     // Only process clickable elements
     guard
-      isLink || isButton || isRadioButton || isTab || isTextField || isCheckBox || isTextArea
+      isActionable || isLink || isButton || isRadioButton || isTab || isTextField || isCheckBox
+        || isTextArea
         || isPopUpButton || isMenuItem || isClickableGroup
     else {
       // Skip non-clickable elements but traverse their children
@@ -394,6 +397,8 @@ class AXInterface {
       defaultTitle = "Button"
     } else if isRadioButton {
       defaultTitle = "RadioButton"
+    } else if isActionable {
+      defaultTitle = "Actionable"
     } else {
       defaultTitle = "Button"
     }
@@ -482,7 +487,8 @@ class AXInterface {
         frame: frame,
         title: finalTitle,
         role: role ?? "Unknown",
-        isEnabled: attributes.enabled ?? true
+        isEnabled: attributes.enabled ?? true,
+        actions: getElementActions(element: element)
       )
       clickableElements.append(clickable)
     } else if isButton || isTab || isTextField || isCheckBox || isTextArea || isPopUpButton
@@ -542,16 +548,28 @@ class AXInterface {
     return false
   }
 
-  /// Checks if an element has the AXPress action (indicating it's clickable)
-  private func hasPressAction(element: AXUIElement) -> Bool {
+  /// Gets all available actions for an element
+  private func getElementActions(element: AXUIElement) -> [String] {
     var actionNames: CFArray?
     let result = AXUIElementCopyActionNames(element, &actionNames)
 
     guard result == .success, let actions = actionNames as? [String] else {
-      return false
+      return []
     }
 
-    return actions.contains(kAXPressAction as String)
+    return actions
+  }
+
+  /// Checks if an element has a specific action (or one of the default actions)
+  private func hasAction(element: AXUIElement, _ action: String = kAXPressAction as String) -> Bool {
+    let actions = getElementActions(element: element)
+    
+    // If checking for press action, also accept open action as alternative
+    if action == kAXPressAction as String {
+      return actions.contains(kAXPressAction as String) || actions.contains("AXOpen")
+    }
+    
+    return actions.contains(action)
   }
 
   /// Checks if an element is a window control button (close, minimize, full screen)
@@ -881,14 +899,24 @@ class AXInterface {
 
   /// Performs a click action on the given element
   static func clickElement(_ element: ClickableElement) -> Bool {
-    let result = AXUIElementPerformAction(element.axElement, kAXPressAction as CFString)
-
-    if result == .success {
-      print("Successfully clicked: \(element.title)")
-      return true
-    } else {
-      print("Failed to click element: \(element.title), error: \(result.rawValue)")
-      return false
+    // Try actions in priority order: press first, then open
+    let actionsToTry: [String] = [kAXPressAction as String, "AXOpen"]
+    
+    for action in actionsToTry {
+      // Only try actions that the element supports
+      guard element.actions.contains(action) else { continue }
+      
+      let result = AXUIElementPerformAction(element.axElement, action as CFString)
+      
+      if result == .success {
+        print("Successfully clicked: \(element.title) using action: \(action)")
+        return true
+      } else {
+        debugLog("Failed to click element: \(element.title) with action: \(action), error: \(result.rawValue)")
+      }
     }
+    
+    print("Failed to click element: \(element.title) - no supported actions succeeded")
+    return false
   }
 }
