@@ -83,14 +83,17 @@ public struct ApplicationManager {
           let hasNonMinimizedWindow = axWindows.contains { $0.get(Ax.minimizedAttr) != true }
 
           if !hasNonMinimizedWindow {
-            runningApp.activate()
-
+            // Try to create a new window via menu first without activating
+            // This prevents focusing windows in other workspaces before the new window is created
             if WindowManager.main.createNewWindowViaMenu(for: axApp) {
+              // Activate after creating the window to focus the newly created window
+              runningApp.activate()
               return .opened
             }
-            // If menu approach failed (no File > New Window), re-open the app
+            // If menu approach failed (no File > New Window), activate and re-open the app
             // This handles apps like Calendar that don't have File > New Window
             // Calling openApplication on an already-running app shows its window
+            runningApp.activate()
             NSWorkspace.shared.openApplication(
               at: appURL,
               configuration: NSWorkspace.OpenConfiguration())
