@@ -780,6 +780,7 @@ class AXInterface {
   }
 
   /// Processes all children of an element recursively
+  /// Optimized to use visible children attributes when available (e.g., for tables, lists)
   private func processChildren(
     of element: AXUIElement,
     allScreenBounds: [CGRect],
@@ -789,15 +790,37 @@ class AXInterface {
     clickableElements: inout [ClickableElement],
     depth: Int
   ) {
-    var children: AnyObject?
-    guard
-      AXUIElementCopyAttributeValue(element, kAXChildrenAttribute as CFString, &children)
-        == .success,
-      let childElements = children as? [AXUIElement]
-    else {
-      return
+    // Try to get optimized visible children first (used by tables, lists, and other containers)
+    // This can significantly reduce traversal time for large data sets
+    var childElements: [AXUIElement]?
+    
+    // Check for visible rows (tables, outlines, browsers)
+    if let visibleRows = element.get(Ax.visibleRowsAttr), !visibleRows.isEmpty {
+      debugLog("Using visible rows optimization - found \(visibleRows.count) visible rows")
+      childElements = visibleRows
     }
-
+    // Check for visible children (lists, scroll areas)
+    else if let visibleChildren = element.get(Ax.visibleChildrenAttr), !visibleChildren.isEmpty {
+      debugLog("Using visible children optimization - found \(visibleChildren.count) visible children")
+      childElements = visibleChildren
+    }
+    
+    // Fall back to regular children if no visible attributes available
+    if childElements == nil {
+      var children: AnyObject?
+      guard
+        AXUIElementCopyAttributeValue(element, kAXChildrenAttribute as CFString, &children)
+          == .success,
+        let regularChildren = children as? [AXUIElement]
+      else {
+        return
+      }
+      childElements = regularChildren
+    }
+    
+    // Traverse the children (either optimized or regular)
+    guard let childElements = childElements else { return }
+    
     for child in childElements {
       traverseElement(
         child,

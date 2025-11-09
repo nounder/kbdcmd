@@ -284,6 +284,16 @@ enum Ax {
   //    key: kAXGrowAreaAttribute,
   //    getter: { ($0 as! AXUIElement) }
   //)
+  
+  // Optimized child traversal attributes - returns only visible elements in containers
+  static let visibleChildrenAttr = ReadableAttrImpl<[AXUIElement]>(
+    key: kAXVisibleChildrenAttribute as String,
+    getter: { ($0 as! NSArray) as! [AXUIElement] }
+  )
+  static let visibleRowsAttr = ReadableAttrImpl<[AXUIElement]>(
+    key: kAXVisibleRowsAttribute as String,
+    getter: { ($0 as! NSArray) as! [AXUIElement] }
+  )
 }
 
 private func tryGetWindow(_ any: Any?) -> AXUIElement? {
