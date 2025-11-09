@@ -109,7 +109,23 @@ public class WindowManager {
 
     // Get localized "File" menu name from system
     let localizedFileMenu = getLocalizedString(key: "File", tableName: "MenuCommands")
-    let localizedNewWindow = getLocalizedString(key: "New Window", tableName: "MenuCommands")
+
+    // Determine which "New Window" menu item to look for
+    // For Finder, we need to look for "New Finder Window" instead of just "New Window"
+    var appIdentifier: String?
+    var pid: pid_t = 0
+    if AXUIElementGetPid(app, &pid) == .success,
+      let runningApp = NSRunningApplication(processIdentifier: pid)
+    {
+      appIdentifier = runningApp.bundleIdentifier
+    }
+
+    let localizedNewWindow: String
+    if appIdentifier == "com.apple.finder" {
+      localizedNewWindow = getLocalizedString(key: "New Finder Window", tableName: "MenuCommands")
+    } else {
+      localizedNewWindow = getLocalizedString(key: "New Window", tableName: "MenuCommands")
+    }
 
     // First, find the File menu
     let tree = AXTree(root: menuBarElement)
@@ -131,13 +147,12 @@ public class WindowManager {
       return false
     }
 
-    // Now traverse only within the File menu to find New Window
+    // Now traverse only within the File menu to find the appropriate New Window menu item
     let fileTree = AXTree(root: fileMenu)
     var foundItem: AXUIElement?
 
     fileTree.traverse { element, depth in
-      // Search by exact "New Window" title to avoid conflicts with other shortcuts
-      // (e.g., Mail.app uses Cmd+N for "New Message" instead of "New Window")
+      // Search by exact menu title (e.g., "New Window" or similar)
       let values = element.getAttributes(kAXTitleAttribute)
       if let itemTitle = values[0] as? String, itemTitle == localizedNewWindow {
         foundItem = element
@@ -145,35 +160,6 @@ public class WindowManager {
       }
 
       return nil
-    }
-
-    // If "New Window" not found, look for menu item with Cmd+N shortcut
-    if foundItem == nil {
-      fileTree.traverse { element, depth in
-        // Check for menu shortcut attribute
-        var shortcut: AnyObject?
-        if AXUIElementCopyAttributeValue(element, "AXMenuItemCmdChar" as CFString, &shortcut) == .success,
-           let cmdChar = shortcut as? String,
-           cmdChar.lowercased() == "n" {
-          
-          // Verify it uses Command modifier (not Shift+Cmd+N or other variants)
-          var modifiers: AnyObject?
-          if AXUIElementCopyAttributeValue(element, "AXMenuItemCmdModifiers" as CFString, &modifiers) == .success {
-            let modifierValue = modifiers as? Int ?? 0
-            // 0 means only Cmd, no other modifiers
-            if modifierValue == 0 {
-              foundItem = element
-              return .stop
-            }
-          } else {
-            // If no modifiers attribute, assume it's just Cmd
-            foundItem = element
-            return .stop
-          }
-        }
-        
-        return nil
-      }
     }
 
     if let item = foundItem {
@@ -210,11 +196,11 @@ public class WindowManager {
   public func windowExists(windowId: CGWindowID) -> Bool {
     let windowsInfo = CGWindowListCopyWindowInfo(
       [.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID)
-    
+
     guard let windowList = windowsInfo as? [[String: Any]] else {
       return false
     }
-    
+
     return windowList.contains(where: {
       ($0[kCGWindowNumber as String] as? CGWindowID) == windowId
     })
@@ -223,20 +209,20 @@ public class WindowManager {
   public func windowExists(windowId: CGWindowID, appPath: String) -> Bool {
     let windowsInfo = CGWindowListCopyWindowInfo(
       [.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID)
-    
+
     guard let windowList = windowsInfo as? [[String: Any]] else {
       return false
     }
-    
+
     return windowList.contains(where: { windowDict in
       guard let windowNumber = windowDict[kCGWindowNumber as String] as? CGWindowID,
-            let pid = windowDict[kCGWindowOwnerPID as String] as? pid_t,
-            let app = NSRunningApplication(processIdentifier: pid),
-            let bundleURL = app.bundleURL
+        let pid = windowDict[kCGWindowOwnerPID as String] as? pid_t,
+        let app = NSRunningApplication(processIdentifier: pid),
+        let bundleURL = app.bundleURL
       else {
         return false
       }
-      
+
       return windowNumber == windowId && bundleURL.path == appPath
     })
   }
