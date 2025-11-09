@@ -80,7 +80,11 @@ public struct ApplicationManager {
       if result == .success, let axWindows = axValue as? [AXUIElement] {
         // When ignoreMinimized is true, check if all windows are minimized and create a new window if so
         if ignoreMinimized {
-          let hasNonMinimizedWindow = axWindows.contains { $0.get(Ax.minimizedAttr) != true }
+          // Filter out windows without a valid windowId (e.g., Finder's desktop which is AXScrollArea)
+          // These are not real user-facing windows
+          let realWindows = axWindows.filter { $0.containingWindowId() != nil }
+          
+          let hasNonMinimizedWindow = realWindows.contains { $0.get(Ax.minimizedAttr) != true }
 
           if !hasNonMinimizedWindow {
             // Try to create a new window via menu first without activating
@@ -102,8 +106,11 @@ public struct ApplicationManager {
         }
 
         // If app is already frontmost and has multiple windows, cycle through them
-        if isAlreadyFrontmost && axWindows.count > 1 {
-          let nonMinimizedWindows = axWindows.filter {
+        // Filter out non-real windows (like Finder's desktop)
+        let realWindows = axWindows.filter { $0.containingWindowId() != nil }
+        
+        if isAlreadyFrontmost && realWindows.count > 1 {
+          let nonMinimizedWindows = realWindows.filter {
             $0.get(Ax.minimizedAttr) != true
           }
 

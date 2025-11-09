@@ -102,7 +102,6 @@ public class WindowManager {
     guard AXUIElementCopyAttributeValue(app, kAXMenuBarAttribute as CFString, &menuBar) == .success,
       CFGetTypeID(menuBar) == AXUIElementGetTypeID()
     else {
-      debugLog("Could not get menu bar")
       return false
     }
 
@@ -111,8 +110,6 @@ public class WindowManager {
     // Get localized "File" menu name from system
     let localizedFileMenu = getLocalizedString(key: "File", tableName: "MenuCommands")
     let localizedNewWindow = getLocalizedString(key: "New Window", tableName: "MenuCommands")
-
-    debugLog("Looking for File menu: '\(localizedFileMenu)', New Window: '\(localizedNewWindow)'")
 
     // First, find the File menu
     let tree = AXTree(root: menuBarElement)
@@ -131,7 +128,6 @@ public class WindowManager {
     }
 
     guard let fileMenu = fileMenu else {
-      debugLog("Could not find File menu")
       return false
     }
 
@@ -149,6 +145,35 @@ public class WindowManager {
       }
 
       return nil
+    }
+
+    // If "New Window" not found, look for menu item with Cmd+N shortcut
+    if foundItem == nil {
+      fileTree.traverse { element, depth in
+        // Check for menu shortcut attribute
+        var shortcut: AnyObject?
+        if AXUIElementCopyAttributeValue(element, "AXMenuItemCmdChar" as CFString, &shortcut) == .success,
+           let cmdChar = shortcut as? String,
+           cmdChar.lowercased() == "n" {
+          
+          // Verify it uses Command modifier (not Shift+Cmd+N or other variants)
+          var modifiers: AnyObject?
+          if AXUIElementCopyAttributeValue(element, "AXMenuItemCmdModifiers" as CFString, &modifiers) == .success {
+            let modifierValue = modifiers as? Int ?? 0
+            // 0 means only Cmd, no other modifiers
+            if modifierValue == 0 {
+              foundItem = element
+              return .stop
+            }
+          } else {
+            // If no modifiers attribute, assume it's just Cmd
+            foundItem = element
+            return .stop
+          }
+        }
+        
+        return nil
+      }
     }
 
     if let item = foundItem {
