@@ -44,7 +44,7 @@ public struct CGEventStream: AsyncSequence {
         private var iterator: AsyncStream<CGEvent>.Iterator
         private let eventTap: CFMachPort?
         private let runLoopSource: CFRunLoopSource?
-        private let thread: Thread
+        private let wrapper: ContinuationWrapper
 
         init(
             eventMask: CGEventMask,
@@ -62,33 +62,30 @@ public struct CGEventStream: AsyncSequence {
             self.iterator = stream.makeAsyncIterator()
             self.continuation = capturedContinuation!
 
-            // Create the event tap on a dedicated thread to avoid blocking
+            // Create event tap callback
+            let callback: CGEventTapCallBack = { _, _, event, refcon in
+                guard let refcon = refcon else { return Unmanaged.passUnretained(event) }
+
+                let continuation = Unmanaged<ContinuationWrapper>.fromOpaque(refcon).takeUnretainedValue()
+
+                // Yield the event to the async stream
+                continuation.continuation.yield(event)
+
+                return Unmanaged.passUnretained(event)
+            }
+
+            // Wrap continuation so we can pass it to C callback
+            let wrapper = ContinuationWrapper(continuation: capturedContinuation!)
+            self.wrapper = wrapper
+            let refcon = Unmanaged.passUnretained(wrapper).toOpaque()
+
             var createdEventTap: CFMachPort?
             var createdRunLoopSource: CFRunLoopSource?
-            var createdThread: Thread!
 
+            // Use the shared run loop thread instead of creating a new one
             let setupSemaphore = DispatchSemaphore(value: 0)
 
-            createdThread = Thread {
-                // Set thread name for debugging
-                Thread.current.name = "com.kbdcmd.cgevent-stream"
-
-                // Create event tap callback
-                let callback: CGEventTapCallBack = { _, _, event, refcon in
-                    guard let refcon = refcon else { return Unmanaged.passUnretained(event) }
-
-                    let continuation = Unmanaged<ContinuationWrapper>.fromOpaque(refcon).takeUnretainedValue()
-
-                    // Yield the event to the async stream
-                    continuation.continuation.yield(event)
-
-                    return Unmanaged.passUnretained(event)
-                }
-
-                // Wrap continuation so we can pass it to C callback
-                let wrapper = ContinuationWrapper(continuation: capturedContinuation!)
-                let refcon = Unmanaged.passUnretained(wrapper).toOpaque()
-
+            SharedRunLoopThread.shared.perform {
                 // Create the event tap
                 guard let eventTap = CGEvent.tapCreate(
                     tap: tapLocation,
@@ -106,7 +103,7 @@ public struct CGEventStream: AsyncSequence {
 
                 createdEventTap = eventTap
 
-                // Create run loop source and add to current run loop
+                // Create run loop source and add to shared run loop
                 guard let runLoopSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, eventTap, 0) else {
                     print("Failed to create run loop source")
                     capturedContinuation?.finish()
@@ -116,31 +113,23 @@ public struct CGEventStream: AsyncSequence {
 
                 createdRunLoopSource = runLoopSource
 
-                let runLoop = CFRunLoopGetCurrent()
+                let runLoop = SharedRunLoopThread.shared.getRunLoop()
                 CFRunLoopAddSource(runLoop, runLoopSource, .defaultMode)
 
                 // Enable the event tap
                 CGEvent.tapEnable(tap: eventTap, enable: true)
 
+                debugLog("CGEventStream: Event tap created and added to shared run loop")
+
                 // Signal that setup is complete
                 setupSemaphore.signal()
-
-                // Run the run loop on this dedicated thread
-                CFRunLoopRun()
-
-                // Cleanup when run loop exits
-                CGEvent.tapEnable(tap: eventTap, enable: false)
-                CFRunLoopRemoveSource(runLoop, runLoopSource, .defaultMode)
             }
-
-            createdThread.start()
 
             // Wait for setup to complete
             setupSemaphore.wait()
 
             self.eventTap = createdEventTap
             self.runLoopSource = createdRunLoopSource
-            self.thread = createdThread
         }
 
         public mutating func next() async -> CGEvent? {

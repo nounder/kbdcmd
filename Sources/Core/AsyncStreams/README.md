@@ -6,10 +6,11 @@ This directory contains modern Swift async/await wrappers for Core Foundation an
 
 The async stream infrastructure eliminates the need for blocking `CFRunLoopRun()` calls by:
 
-1. **Dedicated Threads**: Each stream manages its own thread with a run loop for CF/CG APIs
+1. **Shared Run Loop Thread**: All CF/CG event sources share a single dedicated thread with run loop
 2. **Async Sequences**: All events are delivered via Swift AsyncSequence protocol
 3. **No Blocking**: Code can process events using `for await` loops without blocking the main thread
 4. **Concurrent Processing**: Multiple streams can run in parallel using structured concurrency
+5. **Efficient**: One shared thread handles all CF-based event sources (CGEvent, IOHIDManager, AXObserver)
 
 ## Available Streams
 
@@ -187,39 +188,48 @@ func start() async {
 
 ```
 ┌─────────────────┐
-│   Main Thread   │  ← Your application code
-│   (async/await) │
+│   Main Thread   │  ← Your application code (async/await)
+│   (non-blocking)│
 └────────┬────────┘
          │
-         ├─────────────────┐
-         │                 │
-    ┌────▼─────┐      ┌───▼──────┐
-    │ CGEvent  │      │   HID    │
-    │  Thread  │      │  Thread  │
-    │ (RunLoop)│      │(RunLoop) │
-    └────┬─────┘      └───┬──────┘
-         │                 │
-         │  AsyncStream    │
-         └────────┬────────┘
-                  │
-            ┌─────▼──────┐
-            │  for await │
-            │   events   │
-            └────────────┘
+         │  AsyncStream events flow up
+         │
+         ├──────────┬──────────┬──────────┐
+         │          │          │          │
+    ┌────▼─────┐┌──▼────┐┌────▼────┐┌────▼────┐
+    │ CGEvent  ││  HID  ││   AX    ││   AX    │
+    │ Stream   ││Stream ││Observer ││Observer │
+    │          ││       ││  (app1) ││  (app2) │
+    └────┬─────┘└───┬───┘└────┬────┘└────┬────┘
+         │          │         │          │
+         └──────────┴─────────┴──────────┘
+                    │
+         ┌──────────▼──────────┐
+         │  SHARED RUN LOOP    │  ← Single dedicated thread
+         │      THREAD         │     for all CF-based sources
+         │                     │
+         │  - CFRunLoop        │
+         │  - CGEvent source   │
+         │  - HID source       │
+         │  - AX sources       │
+         └─────────────────────┘
 ```
 
 **Benefits:**
-- CF/CG APIs run on dedicated threads (required for run loop)
+- **Single thread** for all CF/CG run loop sources (efficient!)
+- Multiple CFRunLoopSource objects can share one run loop
 - Your code uses modern async/await (no run loop blocking)
 - Events flow through type-safe async sequences
 - Automatic thread management and cleanup
+- Minimal overhead - no thread per stream
 
 ## Performance Considerations
 
-1. **Dedicated Threads**: Each stream creates a thread, so use them judiciously
+1. **Shared Thread**: All CF-based streams share one run loop thread (efficient - no thread overhead per stream!)
 2. **Event Batching**: Consider debouncing high-frequency events
 3. **Backpressure**: AsyncStream automatically handles backpressure
 4. **QoS**: Background queues use appropriate Quality of Service levels
+5. **Scalability**: You can create many streams without thread proliferation
 
 ## Error Handling
 

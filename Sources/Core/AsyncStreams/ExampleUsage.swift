@@ -310,18 +310,20 @@ struct AsyncDaemonExample {
    ├─ Continue with other work
    └─ Await when needed
 
- Thread 2 (CGEvent):
-   ├─ Run loop for event tap
-   └─ Yields events to stream
-
- Thread 3 (HID):
-   ├─ Run loop for HID manager
-   └─ Yields events to stream
+ Thread 2 (Shared Run Loop):
+   ├─ CFRunLoop with multiple sources:
+   │  ├─ CGEvent tap source
+   │  ├─ HID manager source
+   │  └─ AX observer sources (one per app)
+   └─ All sources yield events to their streams
 
  Benefits:
  - Main thread never blocks
+ - SINGLE thread for all CF sources (efficient!)
  - Easy concurrent processing
  - Automatic thread management
  - Structured concurrency
  - Composable event streams
+ - No thread overhead per stream
+ - Multiple CFRunLoopSource objects share one run loop
  */

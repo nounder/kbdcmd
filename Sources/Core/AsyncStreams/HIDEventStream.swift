@@ -48,7 +48,7 @@ public struct HIDEventStream: AsyncSequence {
         private let stream: AsyncStream<HIDEvent>
         private var iterator: AsyncStream<HIDEvent>.Iterator
         private let hidManager: IOHIDManager
-        private let thread: Thread
+        private let wrapper: ContinuationWrapper
 
         init(deviceMatching: [[String: Any]]) {
             var capturedContinuation: AsyncStream<HIDEvent>.Continuation?
@@ -60,16 +60,31 @@ public struct HIDEventStream: AsyncSequence {
             self.stream = stream
             self.iterator = stream.makeAsyncIterator()
 
-            // Create HID manager on a dedicated thread
-            var createdHIDManager: IOHIDManager!
-            var createdThread: Thread!
+            // Create input value callback
+            let inputCallback: IOHIDValueCallback = { context, result, sender, value in
+                guard let context = context else { return }
 
+                let continuation = Unmanaged<ContinuationWrapper>.fromOpaque(context).takeUnretainedValue()
+
+                // Get the element
+                let element = IOHIDValueGetElement(value)
+
+                // Create HID event and yield it
+                let event = HIDEvent(element: element, value: value)
+                continuation.continuation.yield(event)
+            }
+
+            // Wrap continuation for C callback
+            let wrapper = ContinuationWrapper(continuation: capturedContinuation!)
+            self.wrapper = wrapper
+            let context = Unmanaged.passUnretained(wrapper).toOpaque()
+
+            var createdHIDManager: IOHIDManager!
+
+            // Use the shared run loop thread instead of creating a new one
             let setupSemaphore = DispatchSemaphore(value: 0)
 
-            createdThread = Thread {
-                // Set thread name for debugging
-                Thread.current.name = "com.kbdcmd.hid-stream"
-
+            SharedRunLoopThread.shared.perform {
                 // Create HID manager
                 let manager = IOHIDManagerCreate(kCFAllocatorDefault, IOOptionBits(kIOHIDOptionsTypeNone))
                 createdHIDManager = manager
@@ -77,29 +92,11 @@ public struct HIDEventStream: AsyncSequence {
                 // Set device matching
                 IOHIDManagerSetDeviceMatchingMultiple(manager, deviceMatching as CFArray)
 
-                // Create input value callback
-                let inputCallback: IOHIDValueCallback = { context, result, sender, value in
-                    guard let context = context else { return }
-
-                    let continuation = Unmanaged<ContinuationWrapper>.fromOpaque(context).takeUnretainedValue()
-
-                    // Get the element
-                    let element = IOHIDValueGetElement(value)
-
-                    // Create HID event and yield it
-                    let event = HIDEvent(element: element, value: value)
-                    continuation.continuation.yield(event)
-                }
-
-                // Wrap continuation for C callback
-                let wrapper = ContinuationWrapper(continuation: capturedContinuation!)
-                let context = Unmanaged.passUnretained(wrapper).toOpaque()
-
                 // Register input value callback
                 IOHIDManagerRegisterInputValueCallback(manager, inputCallback, context)
 
-                // Schedule with run loop
-                let runLoop = CFRunLoopGetCurrent()
+                // Schedule with shared run loop
+                let runLoop = SharedRunLoopThread.shared.getRunLoop()
                 IOHIDManagerScheduleWithRunLoop(manager, runLoop, CFRunLoopMode.defaultMode.rawValue)
 
                 // Open the manager
@@ -111,24 +108,16 @@ public struct HIDEventStream: AsyncSequence {
                     return
                 }
 
+                debugLog("HIDEventStream: HID manager created and added to shared run loop")
+
                 // Signal that setup is complete
                 setupSemaphore.signal()
-
-                // Run the run loop on this dedicated thread
-                CFRunLoopRun()
-
-                // Cleanup when run loop exits
-                IOHIDManagerClose(manager, IOOptionBits(kIOHIDOptionsTypeNone))
-                IOHIDManagerUnscheduleFromRunLoop(manager, runLoop, CFRunLoopMode.defaultMode.rawValue)
             }
-
-            createdThread.start()
 
             // Wait for setup to complete
             setupSemaphore.wait()
 
             self.hidManager = createdHIDManager
-            self.thread = createdThread
         }
 
         public mutating func next() async -> HIDEvent? {

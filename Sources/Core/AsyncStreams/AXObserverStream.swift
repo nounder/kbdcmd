@@ -54,7 +54,7 @@ public struct AXObserverStream: AsyncSequence {
         private let stream: AsyncStream<AXNotificationEvent>
         private var iterator: AsyncStream<AXNotificationEvent>.Iterator
         private let observer: AXObserver?
-        private let thread: Thread
+        private let wrapper: ContinuationWrapper
 
         init(pid: pid_t, notifications: [CFString]) {
             var capturedContinuation: AsyncStream<AXNotificationEvent>.Continuation?
@@ -66,36 +66,33 @@ public struct AXObserverStream: AsyncSequence {
             self.stream = stream
             self.iterator = stream.makeAsyncIterator()
 
-            // Create observer on a dedicated thread
-            var createdObserver: AXObserver?
-            var createdThread: Thread!
+            // Create AX observer callback
+            let callback: AXObserverCallback = { observer, element, notification, refcon in
+                guard let refcon = refcon else { return }
 
+                let continuation = Unmanaged<ContinuationWrapper>.fromOpaque(refcon).takeUnretainedValue()
+
+                // Create event and yield it
+                let event = AXNotificationEvent(
+                    observer: observer,
+                    element: element,
+                    notification: notification,
+                    userInfo: nil
+                )
+                continuation.continuation.yield(event)
+            }
+
+            // Wrap continuation for C callback
+            let wrapper = ContinuationWrapper(continuation: capturedContinuation!)
+            self.wrapper = wrapper
+            let refcon = Unmanaged.passUnretained(wrapper).toOpaque()
+
+            var createdObserver: AXObserver?
+
+            // Use the shared run loop thread instead of creating a new one
             let setupSemaphore = DispatchSemaphore(value: 0)
 
-            createdThread = Thread {
-                // Set thread name for debugging
-                Thread.current.name = "com.kbdcmd.axobserver-stream-\(pid)"
-
-                // Create AX observer callback
-                let callback: AXObserverCallback = { observer, element, notification, refcon in
-                    guard let refcon = refcon else { return }
-
-                    let continuation = Unmanaged<ContinuationWrapper>.fromOpaque(refcon).takeUnretainedValue()
-
-                    // Create event and yield it
-                    let event = AXNotificationEvent(
-                        observer: observer,
-                        element: element,
-                        notification: notification,
-                        userInfo: nil
-                    )
-                    continuation.continuation.yield(event)
-                }
-
-                // Wrap continuation for C callback
-                let wrapper = ContinuationWrapper(continuation: capturedContinuation!)
-                let refcon = Unmanaged.passUnretained(wrapper).toOpaque()
-
+            SharedRunLoopThread.shared.perform {
                 // Create the observer
                 var observer: AXObserver?
                 let result = AXObserverCreate(pid, callback, &observer)
@@ -120,7 +117,7 @@ public struct AXObserverStream: AsyncSequence {
                     }
                 }
 
-                // Get run loop source and add to run loop
+                // Get run loop source and add to shared run loop
                 guard let runLoopSource = AXObserverGetRunLoopSource(observer) else {
                     print("Failed to get run loop source for observer")
                     capturedContinuation?.finish()
@@ -128,26 +125,19 @@ public struct AXObserverStream: AsyncSequence {
                     return
                 }
 
-                let runLoop = CFRunLoopGetCurrent()
+                let runLoop = SharedRunLoopThread.shared.getRunLoop()
                 CFRunLoopAddSource(runLoop, runLoopSource, .defaultMode)
+
+                debugLog("AXObserverStream: Observer for pid \(pid) created and added to shared run loop")
 
                 // Signal that setup is complete
                 setupSemaphore.signal()
-
-                // Run the run loop on this dedicated thread
-                CFRunLoopRun()
-
-                // Cleanup when run loop exits
-                CFRunLoopRemoveSource(runLoop, runLoopSource, .defaultMode)
             }
-
-            createdThread.start()
 
             // Wait for setup to complete
             setupSemaphore.wait()
 
             self.observer = createdObserver
-            self.thread = createdThread
         }
 
         public mutating func next() async -> AXNotificationEvent? {
