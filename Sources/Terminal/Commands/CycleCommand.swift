@@ -1,14 +1,15 @@
 import ArgumentParser
 import Core
 
-struct CycleCommand: ParsableCommand {
+@available(macOS 15.0, *)
+struct CycleCommand: AsyncParsableCommand {
   static let configuration = CommandConfiguration(
     commandName: "cycle",
     abstract: "Cycle through windows of the frontmost application"
   )
 
-  func run() throws {
+  func run() async throws {
     try Permissions.checkAccessibility()
-    WindowManager.main.cycleAppWindows()
+    await WindowManager.main.cycleAppWindows()
   }
 }

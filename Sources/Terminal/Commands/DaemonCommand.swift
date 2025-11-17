@@ -2,18 +2,19 @@ import ArgumentParser
 import Core
 import Foundation
 
-struct DaemonCommand: ParsableCommand {
+@available(macOS 15.0, *)
+struct DaemonCommand: AsyncParsableCommand {
   static let configuration = CommandConfiguration(
     commandName: "daemon",
     abstract: "Start the keyboard command daemon"
   )
 
-  func run() throws {
+  func run() async throws {
     try Permissions.checkAccessibility()
 
     print("kbdcmd daemon started")
     registerDefaultKeybindings()
-    KeyListener.shared.start()
+    await KeyListener.shared.startAsync()
   }
 
   private func registerDefaultKeybindings() {
@@ -21,8 +22,12 @@ struct DaemonCommand: ParsableCommand {
 
     // Right Command + ` to assign keybinding for frontmost app
     kb.register([KeyPress(key: .character("`"), flags: .maskCmdRight)]) { _ in
-      if let appPath = WindowManager.main.getFrontmostAppPath() {
-        KeybindingAssignmentOverlay.shared.show(for: appPath)
+      Task {
+        if let appPath = await WindowManager.main.getFrontmostAppPath() {
+          await MainActor.run {
+            KeybindingAssignmentOverlay.shared.show(for: appPath)
+          }
+        }
       }
     }
 
@@ -31,9 +36,13 @@ struct DaemonCommand: ParsableCommand {
     kb.register(
       [KeyPress(key: .character("`"), flags: [.maskCmdRight, .maskShiftLeft, .maskShiftRight])]
     ) { _ in
-      if let windowId = WindowManager.main.getFrontmostWindow() {
-        let windowTitle = WindowManager.main.getWindowTitle(windowId: windowId) ?? "Window"
-        KeybindingAssignmentOverlay.shared.show(forWindow: windowId, windowTitle: windowTitle)
+      Task {
+        if let windowId = await WindowManager.main.getFrontmostWindow() {
+          let windowTitle = await WindowManager.main.getWindowTitle(windowId: windowId) ?? "Window"
+          await MainActor.run {
+            KeybindingAssignmentOverlay.shared.show(forWindow: windowId, windowTitle: windowTitle)
+          }
+        }
       }
     }
 

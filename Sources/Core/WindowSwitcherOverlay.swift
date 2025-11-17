@@ -91,13 +91,16 @@ struct WindowSwitcherView: View {
   private func appSectionView(for appEntry: AppEntry) -> some View {
     VStack(alignment: .leading, spacing: 8) {
       Button(action: {
-        if let group = appEntry.group {
-          WindowManager.main.focusApp(pid: group.pid)
-        } else {
-          // App is not running, try to open it
-          _ = try? ApplicationManager.openOrFocus(appEntry.appPath)
-          DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-            OverlayManager.shared.hideActive()
+        Task {
+          if let group = appEntry.group {
+            await WindowManager.main.focusApp(pid: group.pid)
+          } else {
+            // App is not running, try to open it
+            _ = try? ApplicationManager.openOrFocus(appEntry.appPath)
+            try? await Task.sleep(nanoseconds: 100_000_000) // 0.1 seconds
+            await MainActor.run {
+              OverlayManager.shared.hideActive()
+            }
           }
         }
       }) {
@@ -147,7 +150,9 @@ struct WindowSwitcherView: View {
   private func runningAppView(for group: AppWindowGroup) -> some View {
     VStack(alignment: .leading, spacing: 8) {
       Button(action: {
-        WindowManager.main.focusApp(pid: group.pid)
+        Task {
+          await WindowManager.main.focusApp(pid: group.pid)
+        }
       }) {
         HStack(spacing: 8) {
           if let icon = group.appIcon {
@@ -184,7 +189,9 @@ struct WindowSwitcherView: View {
 
   private func windowView(for window: WindowInfo) -> some View {
     Button(action: {
-      WindowManager.main.focusWindow(window)
+      Task {
+        await WindowManager.main.focusWindow(window)
+      }
     }) {
       HStack(spacing: 8) {
         Circle()

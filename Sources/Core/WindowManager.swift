@@ -13,20 +13,21 @@ enum DesktopError: Error {
   case invalidDesktopNumber
 }
 
+@available(macOS 15.0, *)
 public class WindowManager {
   public static let main = WindowManager()
 
-  func getFrontmostApplication() -> NSRunningApplication? {
-    return NSWorkspace.shared.frontmostApplication
+  func getFrontmostApplication() async -> NSRunningApplication? {
+    await AsyncWindowAPI.frontmostApplication()
   }
 
-  func listWindows(for targetApp: NSRunningApplication? = nil) -> [Window] {
-    let windowsInfo = CGWindowListCopyWindowInfo(
-      [.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID)
+  func listWindows(for targetApp: NSRunningApplication? = nil) async -> [Window] {
+    let windowsInfo = await AsyncWindowAPI.windowListCopyWindowInfo(
+      [.optionOnScreenOnly, .excludeDesktopElements])
 
     var windows: [Window] = []
 
-    for window in Array<NSDictionary>.fromCFArray(records: windowsInfo) ?? [] {
+    for window in windowsInfo {
       guard let id = window[kCGWindowNumber as String] as? CGWindowID,
         let pid = window[kCGWindowOwnerPID as String] as? pid_t,
         let bounds = window[kCGWindowBounds] as? NSDictionary,
@@ -59,27 +60,18 @@ public class WindowManager {
     return windows
   }
 
-  public func cycleAppWindows() {
-    guard let frontmostApp = getFrontmostApplication() else {
+  public func cycleAppWindows() async {
+    guard let frontmostApp = await getFrontmostApplication() else {
       print("Cannot get frontmost application")
       return
     }
 
     let axApp = AXUIElementCreateApplication(frontmostApp.processIdentifier)
 
-    var axValue: AnyObject?
-    let result = AXUIElementCopyAttributeValue(
-      axApp, kAXWindowsAttribute as CFString, &axValue)
+    let axWindows = await AsyncWindowAPI.axWindowList(axApp)
 
-    guard result == .success else {
-      print("Could not get Accessability windows")
-      return
-    }
-
-    let axWindows = axValue as? [AXUIElement]
-
-    guard let axWindows = axWindows else {
-      print("Could not get Accessability windows")
+    guard !axWindows.isEmpty else {
+      print("Could not get Accessibility windows")
       return
     }
 
@@ -93,7 +85,7 @@ public class WindowManager {
 
     // Raise the last window to properly cycle through all windows
     // When raised, it becomes the frontmost, creating a rotation effect
-    _ = nonMinimizedWindows.last!.raise()
+    await AsyncWindowAPI.activateWindow(nonMinimizedWindows.last!)
   }
 
   func createNewWindowViaMenu(for app: AXUIElement) -> Bool {
@@ -193,26 +185,18 @@ public class WindowManager {
     return key
   }
 
-  public func windowExists(windowId: CGWindowID) -> Bool {
-    let windowsInfo = CGWindowListCopyWindowInfo(
-      [.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID)
-
-    guard let windowList = windowsInfo as? [[String: Any]] else {
-      return false
-    }
+  public func windowExists(windowId: CGWindowID) async -> Bool {
+    let windowList = await AsyncWindowAPI.windowListCopyWindowInfo(
+      [.optionOnScreenOnly, .excludeDesktopElements])
 
     return windowList.contains(where: {
       ($0[kCGWindowNumber as String] as? CGWindowID) == windowId
     })
   }
 
-  public func windowExists(windowId: CGWindowID, appPath: String) -> Bool {
-    let windowsInfo = CGWindowListCopyWindowInfo(
-      [.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID)
-
-    guard let windowList = windowsInfo as? [[String: Any]] else {
-      return false
-    }
+  public func windowExists(windowId: CGWindowID, appPath: String) async -> Bool {
+    let windowList = await AsyncWindowAPI.windowListCopyWindowInfo(
+      [.optionOnScreenOnly, .excludeDesktopElements])
 
     return windowList.contains(where: { windowDict in
       guard let windowNumber = windowDict[kCGWindowNumber as String] as? CGWindowID,
@@ -227,16 +211,15 @@ public class WindowManager {
     })
   }
 
-  public func activateWindow(windowId: CGWindowID, includeMinimized: Bool = false) -> Bool {
+  public func activateWindow(windowId: CGWindowID, includeMinimized: Bool = false) async -> Bool {
     debugLog("Activating window \(windowId), includeMinimized: \(includeMinimized)")
 
     // Get all windows from all apps
-    let windowsInfo = CGWindowListCopyWindowInfo(
-      [.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID)
+    let windowList = await AsyncWindowAPI.windowListCopyWindowInfo(
+      [.optionOnScreenOnly, .excludeDesktopElements])
 
     // Find the window and get its pid
-    guard let windowList = windowsInfo as? [[String: Any]],
-      let windowDict = windowList.first(where: {
+    guard let windowDict = windowList.first(where: {
         ($0[kCGWindowNumber as String] as? CGWindowID) == windowId
       }),
       let pid = windowDict[kCGWindowOwnerPID as String] as? pid_t,
@@ -252,12 +235,9 @@ public class WindowManager {
     let axApp = AXUIElementCreateApplication(pid)
 
     // Get all windows
-    var axValue: AnyObject?
-    guard
-      AXUIElementCopyAttributeValue(axApp, kAXWindowsAttribute as CFString, &axValue)
-        == .success,
-      let axWindows = axValue as? [AXUIElement]
-    else {
+    let axWindows = await AsyncWindowAPI.axWindowList(axApp)
+
+    guard !axWindows.isEmpty else {
       debugLog("Failed to get AX windows for pid \(pid)")
       return false
     }
@@ -292,18 +272,18 @@ public class WindowManager {
 
     // Raise window to front
     debugLog("Raising window to front")
-    _ = targetWindow.raise()
+    await AsyncWindowAPI.activateWindow(targetWindow)
 
     // Activate the app
     debugLog("Activating app")
-    app.activate()
+    await AsyncWindowAPI.activateApplication(app)
 
     debugLog("Window activation successful")
     return true
   }
 
-  public func getFrontmostWindow() -> CGWindowID? {
-    guard let frontmostApp = getFrontmostApplication() else {
+  public func getFrontmostWindow() async -> CGWindowID? {
+    guard let frontmostApp = await getFrontmostApplication() else {
       return nil
     }
 
@@ -318,12 +298,11 @@ public class WindowManager {
     return windowId
   }
 
-  public func getWindowTitle(windowId: CGWindowID) -> String? {
-    let windowsInfo = CGWindowListCopyWindowInfo(
-      [.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID)
+  public func getWindowTitle(windowId: CGWindowID) async -> String? {
+    let windowList = await AsyncWindowAPI.windowListCopyWindowInfo(
+      [.optionOnScreenOnly, .excludeDesktopElements])
 
-    guard let windowList = windowsInfo as? [[String: Any]],
-      let windowDict = windowList.first(where: {
+    guard let windowDict = windowList.first(where: {
         ($0[kCGWindowNumber as String] as? CGWindowID) == windowId
       }),
       let pid = windowDict[kCGWindowOwnerPID as String] as? pid_t
@@ -333,12 +312,8 @@ public class WindowManager {
 
     let axApp = AXUIElementCreateApplication(pid)
 
-    var axValue: AnyObject?
-    guard
-      AXUIElementCopyAttributeValue(axApp, kAXWindowsAttribute as CFString, &axValue)
-        == .success,
-      let axWindows = axValue as? [AXUIElement],
-      let targetWindow = axWindows.first(where: { $0.containingWindowId() == windowId })
+    let axWindows = await AsyncWindowAPI.axWindowList(axApp)
+    guard let targetWindow = axWindows.first(where: { $0.containingWindowId() == windowId })
     else {
       return nil
     }
@@ -347,8 +322,8 @@ public class WindowManager {
   }
 
   /// Gets the path to the frontmost application
-  public func getFrontmostAppPath() -> String? {
-    guard let frontmostApp = NSWorkspace.shared.frontmostApplication,
+  public func getFrontmostAppPath() async -> String? {
+    guard let frontmostApp = await AsyncWindowAPI.frontmostApplication(),
       let bundleURL = frontmostApp.bundleURL
     else {
       return nil
@@ -357,32 +332,36 @@ public class WindowManager {
   }
 
   /// Focuses a window and optionally hides the active overlay
-  func focusWindow(_ windowInfo: WindowInfo, hideOverlay: Bool = true) {
+  func focusWindow(_ windowInfo: WindowInfo, hideOverlay: Bool = true) async {
     guard let axWindow = windowInfo.axWindow else { return }
 
-    let app = NSRunningApplication(processIdentifier: windowInfo.pid)
-    app?.activate()
+    if let app = NSRunningApplication(processIdentifier: windowInfo.pid) {
+      await AsyncWindowAPI.activateApplication(app)
+    }
 
     if windowInfo.isMinimized {
       axWindow.set(Ax.minimizedAttr, false)
     }
 
-    _ = axWindow.raise()
+    await AsyncWindowAPI.activateWindow(axWindow)
 
     if hideOverlay {
-      DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+      await Task.sleep(100_000_000) // 0.1 seconds
+      await MainActor.run {
         OverlayManager.shared.hideActive()
       }
     }
   }
 
   /// Focuses an application and optionally hides the active overlay
-  public func focusApp(pid: pid_t, hideOverlay: Bool = true) {
-    let app = NSRunningApplication(processIdentifier: pid)
-    app?.activate()
+  public func focusApp(pid: pid_t, hideOverlay: Bool = true) async {
+    if let app = NSRunningApplication(processIdentifier: pid) {
+      await AsyncWindowAPI.activateApplication(app)
+    }
 
     if hideOverlay {
-      DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+      await Task.sleep(100_000_000) // 0.1 seconds
+      await MainActor.run {
         OverlayManager.shared.hideActive()
       }
     }

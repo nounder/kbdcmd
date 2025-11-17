@@ -370,11 +370,13 @@ public class Keybindings {
     register([KeyPress(key: .character(upperLetter), flags: .maskCmdRight)]) { [weak self] _ in
       guard let self = self else { return }
       debugLog("Keybinding '\(upperLetter)' triggered for window \(windowId)")
-      if !WindowManager.main.activateWindow(windowId: windowId, includeMinimized: includeMinimized)
-      {
-        // Window doesn't exist anymore, remove keybinding
-        debugLog("Window activation failed, removing keybinding '\(upperLetter)'")
-        self.removeKeybinding(forLetter: upperLetter)
+      Task {
+        if await !WindowManager.main.activateWindow(windowId: windowId, includeMinimized: includeMinimized)
+        {
+          // Window doesn't exist anymore, remove keybinding
+          debugLog("Window activation failed, removing keybinding '\(upperLetter)'")
+          self.removeKeybinding(forLetter: upperLetter)
+        }
       }
     }
 
@@ -547,6 +549,12 @@ public class Keybindings {
   // MARK: - Persistence
 
   private func loadKeybindings() {
+    Task {
+      await loadKeybindingsAsync()
+    }
+  }
+
+  private func loadKeybindingsAsync() async {
     guard FileManager.default.fileExists(atPath: keysFileURL.path) else {
       return
     }
@@ -565,19 +573,21 @@ public class Keybindings {
       for item in file.items {
         guard let letter = item.letter.first else { continue }
         let upperLetter = Character(String(letter).uppercased())
-        
+
         if let windowId = item.windowId {
           // This is a window keybinding
           // Check if the window still exists before restoring the keybinding
-          if WindowManager.main.windowExists(windowId: windowId, appPath: item.appPath) {
+          if await WindowManager.main.windowExists(windowId: windowId, appPath: item.appPath) {
             keybindings[upperLetter] = .windowActivation(windowId: windowId, appPath: item.appPath, includeMinimized: true)
 
             // Register the keybinding
             register([KeyPress(key: .character(upperLetter), flags: .maskCmdRight)]) { [weak self] _ in
               guard let self = self else { return }
-              if !WindowManager.main.activateWindow(windowId: windowId, includeMinimized: true) {
-                // Window doesn't exist anymore, remove keybinding
-                self.removeKeybinding(forLetter: upperLetter)
+              Task {
+                if await !WindowManager.main.activateWindow(windowId: windowId, includeMinimized: true) {
+                  // Window doesn't exist anymore, remove keybinding
+                  self.removeKeybinding(forLetter: upperLetter)
+                }
               }
             }
 

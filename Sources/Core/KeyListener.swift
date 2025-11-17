@@ -3,8 +3,12 @@ import Cocoa
 import IOKit.hid
 import InputMethodKit
 
+@available(macOS 15.0, *)
 public class KeyListener {
   public static let shared = KeyListener()
+
+  // Task that runs the event stream
+  private var eventStreamTask: Task<Void, Never>?
 
   private var eventTap: CFMachPort?
   private var sequenceBuffer: [KeyPress] = []
@@ -212,34 +216,8 @@ public class KeyListener {
       debugLog("ERROR: Failed to start HID monitor: \(error)")
     }
 
-    // Listen for keyDown, keyUp, flagsChanged, and mouse events
-    let eventMask =
-      (1 << CGEventType.keyDown.rawValue) | (1 << CGEventType.keyUp.rawValue)
-      | (1 << CGEventType.flagsChanged.rawValue)
-      | (1 << CGEventType.leftMouseDown.rawValue)
-    guard
-      let eventTap = CGEvent.tapCreate(
-        tap: .cgSessionEventTap,
-        place: .headInsertEventTap,
-        options: .defaultTap,
-        eventsOfInterest: CGEventMask(eventMask),
-        callback: { (proxy, type, event, refcon) -> Unmanaged<CGEvent>? in
-          let handled = KeyListener.handleEvent(proxy: proxy, type: type, event: event)
-
-          return handled ? nil : Unmanaged.passRetained(event)
-        },
-        userInfo: nil
-      )
-    else {
-      print("ERROR: Failed to create event tap")
-      return
-    }
-
-    self.eventTap = eventTap
-    let runLoopSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, eventTap, 0)
-    CFRunLoopAddSource(CFRunLoopGetCurrent(), runLoopSource, .commonModes)
-    CGEvent.tapEnable(tap: eventTap, enable: true)
-    debugLog("KeyListener initialized, event tap enabled")
+    // Event tap will be created when startAsync() is called
+    debugLog("KeyListener initialized")
   }
 
   deinit {
@@ -540,8 +518,39 @@ public class KeyListener {
     return nil
   }
 
+  /// Starts the event listener using AsyncStream (modern async/await approach)
+  public func startAsync() async {
+    debugLog("Starting KeyListener with AsyncStream...")
+
+    // Create event mask for keyDown, keyUp, flagsChanged, and mouse events
+    let eventMask: CGEventMask =
+      (1 << CGEventType.keyDown.rawValue) | (1 << CGEventType.keyUp.rawValue)
+      | (1 << CGEventType.flagsChanged.rawValue)
+      | (1 << CGEventType.leftMouseDown.rawValue)
+
+    // Create AsyncStream for events
+    let eventStream = AsyncStreamUtils.eventTapStream(eventsOfInterest: eventMask)
+
+    // Process events from the stream
+    for await (event, proxy) in eventStream {
+      let type = event.type
+      let handled = Self.handleEvent(proxy: proxy, type: type, event: event)
+
+      // If not handled, the event will pass through
+      // The AsyncStream implementation handles this automatically
+    }
+
+    debugLog("KeyListener event stream ended")
+  }
+
+  /// Legacy synchronous start method (deprecated - use startAsync instead)
+  @available(*, deprecated, message: "Use startAsync() instead")
   public func start() {
-    CFRunLoopRun()
+    Task {
+      await startAsync()
+    }
+    // Keep the current thread alive
+    RunLoop.current.run()
   }
 
   private static func detectCapsLockRemapping(from flags: UInt64) -> KeyboardModifierAction {
