@@ -25,133 +25,100 @@ struct AppWindowGroup: Identifiable {
   let pid: pid_t
 }
 
+@MainActor
 class WindowChangePublisher: ObservableObject {
   @Published var windowGroups: [AppWindowGroup] = []
 
-  private var axObservers: [AXObserver] = []
-  private var workspaceObservers: [NSObjectProtocol] = []
-  private let backgroundQueue = DispatchQueue(
-    label: "com.kbdcmd.windowPublisher", qos: .userInitiated)
+  // Async tasks for monitoring
+  private var workspaceMonitorTask: Task<Void, Never>?
+  private var axObserverManager: AXMultiObserverStream?
 
   func startMonitoring() {
-    refresh()
-    setupWorkspaceNotifications()
-    setupAccessibilityObservers()
+    Task {
+      await refresh()
+    }
+    setupAsyncMonitoring()
   }
 
   func stopMonitoring() {
-    removeWorkspaceNotifications()
-    removeAccessibilityObservers()
+    workspaceMonitorTask?.cancel()
+    workspaceMonitorTask = nil
+
+    Task {
+      await axObserverManager?.removeAllObservers()
+      axObserverManager = nil
+    }
   }
 
-  private func refresh() {
-    // Perform heavy window querying on background queue to avoid blocking main thread
-    backgroundQueue.async { [weak self] in
-      guard let self = self else { return }
+  private func refresh() async {
+    // Perform heavy window querying on background task to avoid blocking main thread
+    let groups = await Task.detached(priority: .userInitiated) {
+      await self.getWindowGroups()
+    }.value
 
-      // Heavy work: query all apps, accessibility API, and window info
-      let groups = self.getWindowGroups()
+    // Update @Published property on main actor
+    self.windowGroups = groups
+  }
 
-      // Update @Published property on main thread for UI binding
-      DispatchQueue.main.async {
-        self.windowGroups = groups
+  private func setupAsyncMonitoring() {
+    // Setup workspace notification monitoring
+    workspaceMonitorTask = Task { @MainActor in
+      let stream = WorkspaceNotificationStream.applicationLifecycle()
+
+      for await event in stream {
+        debugLog("Workspace event: \(event.name.rawValue)")
+
+        if event.isApplicationLaunched, let pid = event.processIdentifier {
+          // Add AX observer for newly launched app
+          await self.addAXObserver(for: pid)
+        } else if event.isApplicationTerminated, let pid = event.processIdentifier {
+          // Remove AX observer for terminated app
+          await axObserverManager?.removeObserver(for: pid)
+        }
+
+        // Refresh window list for any workspace event
+        await self.refresh()
+      }
+    }
+
+    // Setup AX observer manager for window events
+    Task {
+      let manager = AXMultiObserverStream(
+        notifications: [
+          kAXWindowCreatedNotification as CFString,
+          kAXUIElementDestroyedNotification as CFString,
+          kAXWindowMiniaturizedNotification as CFString,
+          kAXWindowDeminiaturizedNotification as CFString,
+          kAXMovedNotification as CFString,
+          kAXResizedNotification as CFString,
+        ]
+      ) { @Sendable [weak self] event in
+        guard let self = self else { return }
+        debugLog("AX event: \(event.notificationName)")
+
+        // Refresh window list when window events occur
+        await self.refresh()
+      }
+
+      self.axObserverManager = manager
+
+      // Add observers for all currently running apps
+      let runningApps = NSWorkspace.shared.runningApplications
+      for app in runningApps where app.activationPolicy == .regular {
+        await manager.addObserver(for: app.processIdentifier)
       }
     }
   }
 
-  private func setupWorkspaceNotifications() {
-    let notifications: [NSNotification.Name] = [
-      NSWorkspace.didActivateApplicationNotification,
-      NSWorkspace.didLaunchApplicationNotification,
-      NSWorkspace.didTerminateApplicationNotification,
-    ]
-
-    for name in notifications {
-      let observer = NotificationCenter.default.addObserver(
-        forName: name,
-        object: nil,
-        queue: .main
-      ) { [weak self] _ in
-        self?.refresh()
-      }
-      workspaceObservers.append(observer)
-    }
+  private func addAXObserver(for pid: pid_t) async {
+    await axObserverManager?.addObserver(for: pid)
   }
 
-  private func removeWorkspaceNotifications() {
-    for observer in workspaceObservers {
-      NotificationCenter.default.removeObserver(observer)
-    }
-    workspaceObservers.removeAll()
-  }
-
-  private func setupAccessibilityObservers() {
+  private func getWindowGroups() async -> [AppWindowGroup] {
     let runningApps = NSWorkspace.shared.runningApplications
 
-    for app in runningApps {
-      guard app.activationPolicy == .regular else { continue }
-
-      var observer: AXObserver?
-      let result = AXObserverCreate(
-        app.processIdentifier,
-        { (observer, element, notification, refcon) in
-          let publisher = Unmanaged<WindowChangePublisher>.fromOpaque(refcon!).takeUnretainedValue()
-          publisher.refresh()
-        },
-        &observer
-      )
-
-      guard result == .success, let observer = observer else {
-        continue
-      }
-
-      let appElement = AXUIElementCreateApplication(app.processIdentifier)
-
-      let notifications = [
-        kAXWindowCreatedNotification,
-        // thats probably lots of notifications, do we need it?
-        kAXUIElementDestroyedNotification,
-        kAXWindowMiniaturizedNotification,
-        kAXWindowDeminiaturizedNotification,
-        kAXMovedNotification,
-        kAXResizedNotification,
-      ]
-
-      for notification in notifications {
-        AXObserverAddNotification(
-          observer,
-          appElement,
-          notification as CFString,
-          Unmanaged.passUnretained(self).toOpaque()
-        )
-      }
-
-      CFRunLoopAddSource(
-        CFRunLoopGetCurrent(),
-        AXObserverGetRunLoopSource(observer),
-        .defaultMode
-      )
-
-      axObservers.append(observer)
-    }
-  }
-
-  private func removeAccessibilityObservers() {
-    for observer in axObservers {
-      CFRunLoopRemoveSource(
-        CFRunLoopGetCurrent(),
-        AXObserverGetRunLoopSource(observer),
-        .defaultMode
-      )
-    }
-    axObservers.removeAll()
-  }
-
-  private func getWindowGroups() -> [AppWindowGroup] {
-    let runningApps = NSWorkspace.shared.runningApplications
-
-    // Build z-index map from CGWindowListCopyWindowInfo (returns windows in front-to-back order)
-    let zIndexMap = buildZIndexMap()
+    // Build z-index map asynchronously to avoid blocking
+    let zIndexMap = await asyncWindowManager.getZIndexMapping()
 
     var groupedWindows: [String: [WindowInfo]] = [:]
 
@@ -265,23 +232,4 @@ class WindowChangePublisher: ObservableObject {
     }.sorted { $0.appName < $1.appName }
   }
 
-  private func buildZIndexMap() -> [CGWindowID: Int] {
-    var zIndexMap: [CGWindowID: Int] = [:]
-
-    let windowsInfo = CGWindowListCopyWindowInfo(
-      [.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID)
-
-    guard let windowList = windowsInfo as? [[String: Any]] else {
-      return zIndexMap
-    }
-
-    // Windows are returned in front-to-back order, so index 0 is topmost
-    for (index, windowDict) in windowList.enumerated() {
-      if let windowId = windowDict[kCGWindowNumber as String] as? CGWindowID {
-        zIndexMap[windowId] = index
-      }
-    }
-
-    return zIndexMap
-  }
 }
