@@ -83,17 +83,31 @@ public class WindowManager {
       return
     }
 
-    let nonMinimizedWindows = axWindows.filter {
-      $0.get(Ax.minimizedAttr) != true
+    let includeMinimized = UserDefaults.standard.bool(forKey: "includeMinimizedWindows")
+
+    let windowsToCycle: [AXUIElement]
+    if includeMinimized {
+      windowsToCycle = axWindows
+    } else {
+      windowsToCycle = axWindows.filter {
+        $0.get(Ax.minimizedAttr) != true
+      }
     }
 
-    if nonMinimizedWindows.count <= 1 {
+    if windowsToCycle.count <= 1 {
       return
+    }
+
+    let targetWindow = windowsToCycle.last!
+
+    // Unminimize if needed
+    if targetWindow.get(Ax.minimizedAttr) == true {
+      targetWindow.set(Ax.minimizedAttr, false)
     }
 
     // Raise the last window to properly cycle through all windows
     // When raised, it becomes the frontmost, creating a rotation effect
-    _ = nonMinimizedWindows.last!.raise()
+    _ = targetWindow.raise()
   }
 
   func createNewWindowViaMenu(for app: AXUIElement) -> Bool {

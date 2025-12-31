@@ -59,7 +59,7 @@ struct KbdcmdApp: App {
 
   var body: some Scene {
     Settings {
-      EmptyView()
+      SettingsView()
     }
   }
 }
@@ -67,6 +67,7 @@ struct KbdcmdApp: App {
 class AppDelegate: NSObject, NSApplicationDelegate {
   private var statusItem: NSStatusItem!
   private var menu: NSMenu!
+  private var settingsWindow: NSWindow?
 
   func applicationDidFinishLaunching(_ notification: Notification) {
     // Kill any previous instances of the app
@@ -212,6 +213,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     menu.addItem(NSMenuItem.separator())
     menu.addItem(NSMenuItem(title: "Status: Running", action: nil, keyEquivalent: ""))
     menu.addItem(NSMenuItem.separator())
+    menu.addItem(
+      NSMenuItem(title: "Settings...", action: #selector(openSettings), keyEquivalent: ","))
+    menu.addItem(NSMenuItem.separator())
     menu.addItem(NSMenuItem(title: "Restart", action: #selector(restart), keyEquivalent: "r"))
     menu.addItem(NSMenuItem.separator())
     menu.addItem(NSMenuItem(title: "Quit", action: #selector(quit), keyEquivalent: "q"))
@@ -227,7 +231,26 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     // Register all keybindings
     registerDefaultKeybindings()
 
-    print("✓ Kbdcmd daemon started - listening for keyboard shortcuts")
+    print("✓ Kbdcmd daemon started - listening for keyboard shortcuts!")
+  }
+
+  @objc private func openSettings() {
+    if settingsWindow == nil {
+      let window = NSWindow(
+        contentRect: NSRect(x: 0, y: 0, width: 450, height: 150),
+        styleMask: [.titled, .closable],
+        backing: .buffered,
+        defer: false
+      )
+      window.title = "Kbdcmd Settings"
+      window.contentView = NSHostingView(rootView: SettingsView())
+      window.center()
+      window.isReleasedWhenClosed = false
+      settingsWindow = window
+    }
+
+    NSApp.activate(ignoringOtherApps: true)
+    settingsWindow?.makeKeyAndOrderFront(nil)
   }
 
   @objc private func restart() {

@@ -314,6 +314,7 @@ public class Keybindings {
 
     // Register the keybinding with right command
     register([KeyPress(key: .character(upperLetter), flags: .maskCmdRight)]) { _ in
+      print("Keybinding triggered for app: \(appPath)")
       _ = try? ApplicationManager.openOrFocus(appPath)
     }
 

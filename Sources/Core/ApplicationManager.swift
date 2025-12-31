@@ -106,20 +106,9 @@ public struct ApplicationManager {
         }
 
         // If app is already frontmost and has multiple windows, cycle through them
-        // Filter out non-real windows (like Finder's desktop)
-        let realWindows = axWindows.filter { $0.containingWindowId() != nil }
-        
-        if isAlreadyFrontmost && realWindows.count > 1 {
-          let nonMinimizedWindows = realWindows.filter {
-            $0.get(Ax.minimizedAttr) != true
-          }
-
-          if nonMinimizedWindows.count > 1 {
-            // Raise the last window to properly cycle through all windows
-            // When raised, it becomes the frontmost, creating a rotation effect
-            _ = nonMinimizedWindows.last!.raise()
-            return .focused
-          }
+        if isAlreadyFrontmost {
+          WindowManager.main.cycleAppWindows()
+          return .focused
         }
       } else {
         // If we can't get windows info, just activate the app
