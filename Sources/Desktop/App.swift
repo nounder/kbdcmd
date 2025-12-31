@@ -176,6 +176,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
       print("Copy successful")
 
       // Launch the app from new location using open command
+      // Note: NSWorkspace.openApplication doesn't work here (app doesn't start), must use open CLI
       let process = Process()
       process.executableURL = URL(fileURLWithPath: "/usr/bin/open")
       process.arguments = [destinationPath]
@@ -243,11 +244,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
   private func showAccessibilityAlert() {
     NSApp.activate(ignoringOtherApps: true)
 
-    // Try to trigger the system permission prompt
-    let options: NSDictionary = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true]
+    // Check without triggering system prompt - we show our own alert
+    let options: NSDictionary = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: false]
     let accessibilityEnabled = AXIsProcessTrustedWithOptions(options)
 
-    // If still not enabled after prompt, show our alert
     if !accessibilityEnabled {
       let alert = NSAlert()
       alert.messageText = "Accessibility Permission Required"
