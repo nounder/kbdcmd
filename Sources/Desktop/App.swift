@@ -3,6 +3,56 @@ import ApplicationServices
 import Core
 import SwiftUI
 
+struct InstallDialogView: View {
+  let onInstall: () -> Void
+  let onCancel: () -> Void
+
+  var body: some View {
+    VStack(spacing: 20) {
+      Image(systemName: "keyboard.badge.ellipsis")
+        .font(.system(size: 56, weight: .light))
+        .foregroundStyle(.primary)
+        .symbolRenderingMode(.hierarchical)
+
+      VStack(spacing: 8) {
+        Text("Install Kbdcmd?")
+          .font(.title2)
+          .fontWeight(.semibold)
+
+        Text(
+          "Kbdcmd works best when installed in your Applications folder."
+        )
+        .font(.body)
+        .foregroundStyle(.secondary)
+        .multilineTextAlignment(.center)
+        .fixedSize(horizontal: false, vertical: true)
+      }
+
+      VStack(spacing: 10) {
+        Button(action: onInstall) {
+          Text("Install")
+            .frame(maxWidth: .infinity)
+        }
+        .buttonStyle(.borderedProminent)
+        .controlSize(.large)
+        .keyboardShortcut(.defaultAction)
+
+        Button(action: onCancel) {
+          Text("Cancel")
+            .frame(maxWidth: .infinity)
+        }
+        .buttonStyle(.bordered)
+        .controlSize(.large)
+        .keyboardShortcut(.cancelAction)
+      }
+      .padding(.top, 4)
+    }
+    .padding(28)
+    .frame(width: 280)
+    .background(.ultraThinMaterial)
+  }
+}
+
 @main
 struct KbdcmdApp: App {
   @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
@@ -69,18 +119,46 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     NSApp.activate(ignoringOtherApps: true)
 
-    let alert = NSAlert()
-    alert.messageText = "Install Kbdcmd?"
-    alert.informativeText =
-      "Kbdcmd works best when run from the Applications folder. Would you like to move it there now?"
-    alert.alertStyle = .informational
-    alert.addButton(withTitle: "Install")
-    alert.addButton(withTitle: "Cancel")
+    var userChoice: Bool?
 
-    let response = alert.runModal()
-    if response != .alertFirstButtonReturn {
+    let window = NSWindow(
+      contentRect: NSRect(x: 0, y: 0, width: 280, height: 280),
+      styleMask: [.titled, .fullSizeContentView],
+      backing: .buffered,
+      defer: false
+    )
+    window.title = ""
+    window.titlebarAppearsTransparent = true
+    window.titleVisibility = .hidden
+    window.standardWindowButton(.closeButton)?.isHidden = true
+    window.standardWindowButton(.miniaturizeButton)?.isHidden = true
+    window.standardWindowButton(.zoomButton)?.isHidden = true
+    window.isMovableByWindowBackground = true
+    window.backgroundColor = .clear
+    window.center()
+
+    let contentView = InstallDialogView(
+      onInstall: {
+        userChoice = true
+        window.close()
+        NSApp.stopModal()
+      },
+      onCancel: {
+        userChoice = false
+        window.close()
+        NSApp.stopModal()
+      }
+    )
+    window.contentView = NSHostingView(rootView: contentView)
+
+    NSApp.runModal(for: window)
+
+    guard userChoice == true else {
+      print("User cancelled")
       return false
     }
+
+    print("Starting install from: \(bundlePath)")
 
     let destinationPath = "/Applications/Kbdcmd.app"
     let fileManager = FileManager.default
@@ -88,27 +166,31 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     do {
       // Remove existing app in Applications if present
       if fileManager.fileExists(atPath: destinationPath) {
+        print("Removing existing app at \(destinationPath)")
         try fileManager.removeItem(atPath: destinationPath)
       }
 
-      // Move the app
-      try fileManager.moveItem(atPath: bundlePath, toPath: destinationPath)
+      // Copy the app (don't move, in case we're running from a read-only location)
+      print("Copying app to \(destinationPath)")
+      try fileManager.copyItem(atPath: bundlePath, toPath: destinationPath)
+      print("Copy successful")
 
-      // Launch the app from new location
-      NSWorkspace.shared.openApplication(
-        at: URL(fileURLWithPath: destinationPath),
-        configuration: NSWorkspace.OpenConfiguration()
-      ) { _, _ in }
+      // Launch the app from new location using open command
+      let process = Process()
+      process.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+      process.arguments = [destinationPath]
+      try process.run()
 
       // Quit this instance
       NSApplication.shared.terminate(nil)
       return true
 
     } catch {
+      print("Install error: \(error)")
       let errorAlert = NSAlert()
-      errorAlert.messageText = "Failed to Move"
+      errorAlert.messageText = "Failed to Install"
       errorAlert.informativeText =
-        "Could not move Kbdcmd to Applications: \(error.localizedDescription)"
+        "Could not install Kbdcmd to Applications: \(error.localizedDescription)"
       errorAlert.alertStyle = .warning
       errorAlert.addButton(withTitle: "OK")
       errorAlert.runModal()
