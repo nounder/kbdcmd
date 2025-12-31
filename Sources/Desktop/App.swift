@@ -19,6 +19,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
   private var menu: NSMenu!
 
   func applicationDidFinishLaunching(_ notification: Notification) {
+    // Kill any previous instances of the app
+    terminatePreviousInstances()
+
+    // Check if running from Applications folder, offer to move if not
+    if !isRunningFromApplicationsFolder() {
+      if offerToMoveToApplications() {
+        return  // App will relaunch from Applications
+      }
+    }
+
     // Check accessibility permissions
     if !AXIsProcessTrusted() {
       showAccessibilityAlert()
@@ -27,6 +37,83 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     setupMenuBar()
     startDaemon()
+  }
+
+  private func terminatePreviousInstances() {
+    let currentPid = ProcessInfo.processInfo.processIdentifier
+    let bundleId = Bundle.main.bundleIdentifier ?? "org.libred.kbdcmd"
+
+    for app in NSRunningApplication.runningApplications(withBundleIdentifier: bundleId) {
+      if app.processIdentifier != currentPid {
+        app.terminate()
+      }
+    }
+  }
+
+  private func isRunningFromApplicationsFolder() -> Bool {
+    guard let bundlePath = Bundle.main.bundlePath as NSString? else { return false }
+    let path = bundlePath as String
+
+    // Check both /Applications and ~/Applications
+    if path.hasPrefix("/Applications/") { return true }
+    if let home = FileManager.default.homeDirectoryForCurrentUser.path as String?,
+      path.hasPrefix("\(home)/Applications/")
+    {
+      return true
+    }
+    return false
+  }
+
+  private func offerToMoveToApplications() -> Bool {
+    let bundlePath = Bundle.main.bundlePath
+
+    NSApp.activate(ignoringOtherApps: true)
+
+    let alert = NSAlert()
+    alert.messageText = "Install Kbdcmd?"
+    alert.informativeText =
+      "Kbdcmd works best when run from the Applications folder. Would you like to move it there now?"
+    alert.alertStyle = .informational
+    alert.addButton(withTitle: "Install")
+    alert.addButton(withTitle: "Cancel")
+
+    let response = alert.runModal()
+    if response != .alertFirstButtonReturn {
+      return false
+    }
+
+    let destinationPath = "/Applications/Kbdcmd.app"
+    let fileManager = FileManager.default
+
+    do {
+      // Remove existing app in Applications if present
+      if fileManager.fileExists(atPath: destinationPath) {
+        try fileManager.removeItem(atPath: destinationPath)
+      }
+
+      // Move the app
+      try fileManager.moveItem(atPath: bundlePath, toPath: destinationPath)
+
+      // Launch the app from new location
+      NSWorkspace.shared.openApplication(
+        at: URL(fileURLWithPath: destinationPath),
+        configuration: NSWorkspace.OpenConfiguration()
+      ) { _, _ in }
+
+      // Quit this instance
+      NSApplication.shared.terminate(nil)
+      return true
+
+    } catch {
+      let errorAlert = NSAlert()
+      errorAlert.messageText = "Failed to Move"
+      errorAlert.informativeText =
+        "Could not move Kbdcmd to Applications: \(error.localizedDescription)"
+      errorAlert.alertStyle = .warning
+      errorAlert.addButton(withTitle: "OK")
+      errorAlert.runModal()
+      return false
+    }
   }
 
   private func setupMenuBar() {
@@ -110,6 +197,43 @@ class AppDelegate: NSObject, NSApplicationDelegate {
   private func registerDefaultKeybindings() {
     let kb = Keybindings.shared
 
+    // Right Command + ` to assign keybinding for frontmost app
+    kb.register([KeyPress(key: .character("`"), flags: .maskCmdRight)]) { _ in
+      if let appPath = WindowManager.main.getFrontmostAppPath() {
+        KeybindingAssignmentOverlay.shared.show(for: appPath)
+      }
+    }
+
+    // Right Command + Shift + ` to assign keybinding for frontmost window
+    kb.register(
+      [KeyPress(key: .character("`"), flags: [.maskCmdRight, .maskShiftLeft, .maskShiftRight])]
+    ) { _ in
+      if let windowId = WindowManager.main.getFrontmostWindow() {
+        let windowTitle = WindowManager.main.getWindowTitle(windowId: windowId) ?? "Window"
+        KeybindingAssignmentOverlay.shared.show(forWindow: windowId, windowTitle: windowTitle)
+      }
+    }
+
+    // CapsLock + O for hints
+    kb.register([KeyPress(key: .character("O"), flags: .maskAlphaShift)]) { _ in
+      OverlayManager.shared.showHintOverlay()
+    }
+
+    // Right Command + / for hints
+    kb.register([KeyPress(key: .character("/"), flags: .maskCmdRight)]) { _ in
+      OverlayManager.shared.showHintOverlay()
+    }
+
+    // CapsLock + J/K for scrolling
+    kb.register([KeyPress(key: .character("J"), flags: .maskAlphaShift)]) { _ in
+      Scrolling.shared.smoothScroll(-120)
+    }
+
+    kb.register([KeyPress(key: .character("K"), flags: .maskAlphaShift)]) { _ in
+      Scrolling.shared.smoothScroll(120)
+    }
+
+    // Character-only sequences (snippets)
     let seqTdf = [
       KeyPress(key: .character("t")),
       KeyPress(key: .character("d")),

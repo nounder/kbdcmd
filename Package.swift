@@ -31,7 +31,8 @@ let package = Package(
     .executableTarget(
       name: "Desktop",
       dependencies: ["Core"],
-      path: "Sources/Desktop"
+      path: "Sources/Desktop",
+      exclude: ["Resources"]
     ),
   ]
 )
