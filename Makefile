@@ -8,7 +8,7 @@ install:
 	make build && cp -r .build/Kbdcmd.app /Applications/
 
 setup:
-	make install && open /Applications/Kbdcmd.app
+	make reset-permissions && make install && open /Applications/Kbdcmd.app
 
 clean:
 	swift package clean
