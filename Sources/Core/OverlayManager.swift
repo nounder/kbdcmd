@@ -191,26 +191,72 @@ public class OverlayManager {
         if type == .keyDown {
             let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
 
-            // ESC always closes the active overlay (safety mechanism)
+            // ESC always closes the active overlay
             if keyCode == Key.Named.escape.rawValue {
                 hideActive()
                 return true
             }
 
-            // For keybinding assignment and hint overlays, manually post the event to the window
-            // because CGEvent taps intercept events before they reach NSWindow
+            // Only intercept keys that the overlay will actually handle
+            // Let all other keys (including system shortcuts) pass through
             switch overlay {
-            case .keybindingAssignment(let window), .hint(let window):
-                if let nsEvent = NSEvent(cgEvent: event) {
-                    window.sendEvent(nsEvent)
-                    return true  // Consume the event since we handled it
-                }
-            case .windowSwitcher:
-                // Window switcher doesn't need keyboard input forwarding
-                break
-            }
+            case .hint(let window):
+                // Hint overlay only handles: hint characters (unmodified) and delete/backspace
+                let hasModifiers = event.flags.contains(.maskCommand)
+                    || event.flags.contains(.maskControl)
+                    || event.flags.contains(.maskAlternate)
 
-            return false
+                if hasModifiers {
+                    return false  // Let system handle modified keys
+                }
+
+                // Check if it's delete/backspace
+                let isDelete =
+                    keyCode == Key.Named.delete.rawValue
+                    || keyCode == Key.Named.forwardDelete.rawValue
+
+                // Check if it's a hint character
+                var isHintChar = false
+                if let nsEvent = NSEvent(cgEvent: event),
+                    let chars = nsEvent.characters?.lowercased(),
+                    let firstChar = chars.first
+                {
+                    isHintChar = HintManager.hintCharactersSet.contains(firstChar)
+                }
+
+                if isDelete || isHintChar {
+                    if let nsEvent = NSEvent(cgEvent: event) {
+                        window.sendEvent(nsEvent)
+                        return true
+                    }
+                }
+                return false  // Let unhandled keys pass through
+
+            case .keybindingAssignment(let window):
+                // Keybinding assignment only handles: unmodified letters and numbers
+                let hasModifiers = event.flags.contains(.maskCommand)
+                    || event.flags.contains(.maskControl)
+                    || event.flags.contains(.maskAlternate)
+
+                if hasModifiers {
+                    return false  // Let system handle modified keys
+                }
+
+                // Check if it's a letter or number
+                if let nsEvent = NSEvent(cgEvent: event),
+                    let chars = nsEvent.characters,
+                    let firstChar = chars.first,
+                    firstChar.isLetter || firstChar.isNumber
+                {
+                    window.sendEvent(nsEvent)
+                    return true
+                }
+                return false  // Let unhandled keys pass through
+
+            case .windowSwitcher:
+                // Window switcher doesn't handle keyboard input
+                return false
+            }
         }
 
         return false

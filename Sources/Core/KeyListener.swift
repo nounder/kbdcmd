@@ -256,6 +256,20 @@ public class KeyListener {
   }
 
   static func handleEvent(proxy: CGEventTapProxy, type: CGEventType, event: CGEvent) -> Bool {
+    // Failsafe: rcmd+option+esc terminates the process immediately
+    // This ensures users can always kill the app if something goes wrong
+    if type == .keyDown {
+      let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
+      if keyCode == Key.Named.escape.rawValue
+        && event.flags.contains(.maskCmdRight)
+        && event.flags.contains(.maskAlternate)
+      {
+        debugLog("Failsafe triggered: rcmd+option+esc - terminating process")
+        terminateProcess()
+        return true
+      }
+    }
+
     // Delegate overlay event handling to OverlayManager
     if OverlayManager.shared.interceptEvent(type: type, event: event) {
       return true
@@ -542,6 +556,24 @@ public class KeyListener {
 
   public func start() {
     CFRunLoopRun()
+  }
+
+  /// Terminates the process using the appropriate API
+  /// Uses NSApplication.terminate for GUI apps, exit() for CLI
+  private static func terminateProcess() {
+    DispatchQueue.main.async {
+      #if canImport(AppKit)
+        if NSApp != nil {
+          // Desktop app - use proper AppKit termination
+          NSApplication.shared.terminate(nil)
+        } else {
+          // CLI daemon - use exit
+          exit(0)
+        }
+      #else
+        exit(0)
+      #endif
+    }
   }
 
   private static func detectCapsLockRemapping(from flags: UInt64) -> KeyboardModifierAction {
