@@ -53,6 +53,126 @@ struct InstallDialogView: View {
   }
 }
 
+struct AccessibilityPermissionView: View {
+  @Binding var permissionGranted: Bool
+  let onOpenSettings: () -> Void
+  let onQuit: () -> Void
+
+  var body: some View {
+    VStack(spacing: 24) {
+      // Animated icon
+      ZStack {
+        Circle()
+          .fill(
+            RadialGradient(
+              colors: [Color.accentColor.opacity(0.3), Color.clear],
+              center: .center,
+              startRadius: 0,
+              endRadius: 60
+            )
+          )
+          .frame(width: 120, height: 120)
+
+        Image(systemName: permissionGranted ? "checkmark.shield.fill" : "hand.raised.fill")
+          .font(.system(size: 48, weight: .light))
+          .foregroundStyle(permissionGranted ? .green : .accentColor)
+          .symbolRenderingMode(.hierarchical)
+      }
+
+      VStack(spacing: 12) {
+        Text(permissionGranted ? "Permission Granted!" : "Accessibility Permission Required")
+          .font(.title2)
+          .fontWeight(.semibold)
+
+        if permissionGranted {
+          Text("Starting Kbdcmd...")
+            .font(.body)
+            .foregroundStyle(.secondary)
+        } else {
+          Text("Kbdcmd needs Accessibility permission to monitor keyboard shortcuts and interact with other apps.")
+            .font(.body)
+            .foregroundStyle(.secondary)
+            .multilineTextAlignment(.center)
+            .fixedSize(horizontal: false, vertical: true)
+        }
+      }
+
+      if !permissionGranted {
+        VStack(alignment: .leading, spacing: 10) {
+          StepRow(number: 1, text: "Click \"Open System Settings\" below")
+          StepRow(number: 2, text: "Find Kbdcmd in the list")
+          StepRow(number: 3, text: "Toggle it ON", hint: "If already enabled, remove with − and re-add")
+        }
+        .padding(.horizontal, 8)
+
+        HStack(spacing: 8) {
+          Circle()
+            .fill(Color.orange)
+            .frame(width: 8, height: 8)
+          Text("Waiting for permission...")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        }
+        .padding(.vertical, 8)
+        .padding(.horizontal, 16)
+        .background(Color.secondary.opacity(0.1), in: RoundedRectangle(cornerRadius: 8))
+
+        VStack(spacing: 10) {
+          Button(action: onOpenSettings) {
+            HStack {
+              Image(systemName: "gear")
+              Text("Open System Settings")
+            }
+            .frame(maxWidth: .infinity)
+          }
+          .buttonStyle(.borderedProminent)
+          .controlSize(.large)
+
+          Button(action: onQuit) {
+            Text("Quit")
+              .frame(maxWidth: .infinity)
+          }
+          .buttonStyle(.bordered)
+          .controlSize(.large)
+          .keyboardShortcut(.cancelAction)
+        }
+      }
+    }
+    .padding(32)
+    .frame(width: 340)
+    .background(.ultraThinMaterial)
+    .animation(.spring(response: 0.4, dampingFraction: 0.8), value: permissionGranted)
+  }
+}
+
+struct StepRow: View {
+  let number: Int
+  let text: String
+  var hint: String? = nil
+
+  var body: some View {
+    HStack(alignment: .top, spacing: 12) {
+      Text("\(number)")
+        .font(.caption)
+        .fontWeight(.bold)
+        .foregroundStyle(.white)
+        .frame(width: 20, height: 20)
+        .background(Color.accentColor, in: Circle())
+
+      VStack(alignment: .leading, spacing: 2) {
+        Text(text)
+          .font(.callout)
+          .foregroundStyle(.primary)
+        if let hint = hint {
+          Text(hint)
+            .font(.caption)
+            .foregroundStyle(.tertiary)
+        }
+      }
+    }
+  }
+}
+
 @main
 struct KbdcmdApp: App {
   @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
@@ -68,20 +188,22 @@ class AppDelegate: NSObject, NSApplicationDelegate {
   private var statusItem: NSStatusItem!
   private var menu: NSMenu!
   private var settingsWindow: NSWindow?
+  private var permissionWindow: NSWindow?
+  private var permissionTimer: Timer?
+  private var permissionGranted = false
 
   func applicationDidFinishLaunching(_ notification: Notification) {
     // Kill any previous instances of the app
     terminatePreviousInstances()
 
-    // Check if running from Applications folder, offer to move if not
-    if !isRunningFromApplicationsFolder() {
-      if offerToMoveToApplications() {
-        return  // App will relaunch from Applications
-      }
-    }
-
     // Check accessibility permissions
     if !AXIsProcessTrusted() {
+      // Only offer to move to Applications if not already there and permission not granted
+      if !isRunningFromApplicationsFolder() {
+        if offerToMoveToApplications() {
+          return  // App will relaunch from Applications
+        }
+      }
       showAccessibilityAlert()
       return
     }
@@ -267,37 +389,75 @@ class AppDelegate: NSObject, NSApplicationDelegate {
   private func showAccessibilityAlert() {
     NSApp.activate(ignoringOtherApps: true)
 
-    // Check without triggering system prompt - we show our own alert
+    // Don't trigger system prompt - we show our own custom UI
     let options: NSDictionary = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: false]
-    let accessibilityEnabled = AXIsProcessTrustedWithOptions(options)
+    _ = AXIsProcessTrustedWithOptions(options)
 
-    if !accessibilityEnabled {
-      let alert = NSAlert()
-      alert.messageText = "Accessibility Permission Required"
-      alert.informativeText = """
-        Kbdcmd needs Accessibility permissions to monitor keyboard shortcuts.
+    let window = NSWindow(
+      contentRect: NSRect(x: 0, y: 0, width: 340, height: 420),
+      styleMask: [.titled, .fullSizeContentView],
+      backing: .buffered,
+      defer: false
+    )
+    window.title = ""
+    window.titlebarAppearsTransparent = true
+    window.titleVisibility = .hidden
+    window.standardWindowButton(.closeButton)?.isHidden = true
+    window.standardWindowButton(.miniaturizeButton)?.isHidden = true
+    window.standardWindowButton(.zoomButton)?.isHidden = true
+    window.isMovableByWindowBackground = true
+    window.backgroundColor = .clear
+    window.level = .floating
+    window.center()
+    window.isReleasedWhenClosed = false
 
-        Please:
-        1. Click "Open System Settings" below
-        2. Find Kbdcmd in the list
-        3. Toggle it ON
-        4. Restart the app
-        """
-      alert.alertStyle = .warning
-      alert.addButton(withTitle: "Open System Settings")
-      alert.addButton(withTitle: "Quit")
+    permissionWindow = window
+    updatePermissionView()
+    window.makeKeyAndOrderFront(nil)
+    startPermissionPolling()
+  }
 
-      let response = alert.runModal()
-      if response == .alertFirstButtonReturn {
+  private func updatePermissionView() {
+    guard let window = permissionWindow else { return }
+    let contentView = AccessibilityPermissionView(
+      permissionGranted: Binding(
+        get: { [weak self] in self?.permissionGranted ?? false },
+        set: { [weak self] in self?.permissionGranted = $0 }
+      ),
+      onOpenSettings: {
         NSWorkspace.shared.open(
-          URL(
-            string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!
+          URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!
         )
+      },
+      onQuit: {
+        NSApplication.shared.terminate(nil)
+      }
+    )
+    window.contentView = NSHostingView(rootView: contentView)
+  }
+
+  private func startPermissionPolling() {
+    permissionTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] timer in
+      guard let self = self else {
+        timer.invalidate()
+        return
+      }
+      if AXIsProcessTrusted() {
+        timer.invalidate()
+        self.permissionTimer = nil
+        NSApp.activate(ignoringOtherApps: true)
+        self.permissionGranted = true
+        self.updatePermissionView()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.4) { [weak self] in
+          self?.permissionWindow?.close()
+          self?.permissionWindow = nil
+          self?.setupMenuBar()
+          self?.startDaemon()
+        }
       }
     }
-
-    NSApplication.shared.terminate(nil)
   }
+
 
   private func registerDefaultKeybindings() {
     let kb = Keybindings.shared
