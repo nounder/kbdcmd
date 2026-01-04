@@ -95,7 +95,8 @@ struct WindowSwitcherView: View {
           WindowManager.main.focusApp(pid: group.pid)
         } else {
           // App is not running, try to open it
-          _ = try? ApplicationManager.openOrFocus(appEntry.appPath)
+          let ignoreMinimized = !UserDefaults.standard.bool(forKey: "includeMinimizedWindows")
+          _ = try? ApplicationManager.openOrFocus(appEntry.appPath, ignoreMinimized: ignoreMinimized)
           DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
             OverlayManager.shared.hideActive()
           }

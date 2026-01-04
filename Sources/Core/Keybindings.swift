@@ -315,7 +315,8 @@ public class Keybindings {
     // Register the keybinding with right command
     register([KeyPress(key: .character(upperLetter), flags: .maskCmdRight)]) { _ in
       print("Keybinding triggered for app: \(appPath)")
-      _ = try? ApplicationManager.openOrFocus(appPath)
+      let ignoreMinimized = !UserDefaults.standard.bool(forKey: "includeMinimizedWindows")
+      _ = try? ApplicationManager.openOrFocus(appPath, ignoreMinimized: ignoreMinimized)
     }
 
     // Save to disk
@@ -594,7 +595,8 @@ public class Keybindings {
 
           // Register the keybinding
           register([KeyPress(key: .character(upperLetter), flags: .maskCmdRight)]) { _ in
-            _ = try? ApplicationManager.openOrFocus(item.appPath)
+            let ignoreMinimized = !UserDefaults.standard.bool(forKey: "includeMinimizedWindows")
+            _ = try? ApplicationManager.openOrFocus(item.appPath, ignoreMinimized: ignoreMinimized)
           }
         }
       }

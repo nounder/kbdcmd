@@ -78,31 +78,39 @@ public struct ApplicationManager {
         axApp, kAXWindowsAttribute as CFString, &axValue)
 
       if result == .success, let axWindows = axValue as? [AXUIElement] {
-        // When ignoreMinimized is true, check if all windows are minimized and create a new window if so
-        if ignoreMinimized {
-          // Filter out windows without a valid windowId (e.g., Finder's desktop which is AXScrollArea)
-          // These are not real user-facing windows
-          let realWindows = axWindows.filter { $0.containingWindowId() != nil }
-          
-          let hasNonMinimizedWindow = realWindows.contains { $0.get(Ax.minimizedAttr) != true }
+        // Filter out windows without a valid windowId (e.g., Finder's desktop which is AXScrollArea)
+        // These are not real user-facing windows
+        let realWindows = axWindows.filter { $0.containingWindowId() != nil }
 
-          if !hasNonMinimizedWindow {
-            // Try to create a new window via menu first without activating
-            // This prevents focusing windows in other workspaces before the new window is created
-            if WindowManager.main.createNewWindowViaMenu(for: axApp) {
-              // Activate after creating the window to focus the newly created window
-              runningApp.activate()
-              return .opened
-            }
-            // If menu approach failed (no File > New Window), activate and re-open the app
-            // This handles apps like Calendar that don't have File > New Window
-            // Calling openApplication on an already-running app shows its window
+        let hasNonMinimizedWindow = realWindows.contains { $0.get(Ax.minimizedAttr) != true }
+
+        if !hasNonMinimizedWindow {
+          // When ignoreMinimized is false, try to unminimize a window first
+          if !ignoreMinimized,
+            let windowToUnminimize = realWindows.first(where: { $0.get(Ax.minimizedAttr) == true })
+          {
+            windowToUnminimize.set(Ax.minimizedAttr, false)
+            _ = windowToUnminimize.raise()
             runningApp.activate()
-            NSWorkspace.shared.openApplication(
-              at: appURL,
-              configuration: NSWorkspace.OpenConfiguration())
+            return .focused
+          }
+
+          // No windows to unminimize (or ignoreMinimized is true), create a new window
+          // Try to create a new window via menu first without activating
+          // This prevents focusing windows in other workspaces before the new window is created
+          if WindowManager.main.createNewWindowViaMenu(for: axApp) {
+            // Activate after creating the window to focus the newly created window
+            runningApp.activate()
             return .opened
           }
+          // If menu approach failed (no File > New Window), activate and re-open the app
+          // This handles apps like Calendar that don't have File > New Window
+          // Calling openApplication on an already-running app shows its window
+          runningApp.activate()
+          NSWorkspace.shared.openApplication(
+            at: appURL,
+            configuration: NSWorkspace.OpenConfiguration())
+          return .opened
         }
 
         // If app is already frontmost and has multiple windows, cycle through them
