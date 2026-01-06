@@ -517,5 +517,33 @@ class AppDelegate: NSObject, NSApplicationDelegate {
       let dateString = df.string(from: Date())
       Snippets.expandSnippet(for: seq, insert: dateString)
     }
+
+    // CapsLock + Arrow keys for window moving
+    kb.register([KeyPress(key: .named(.upArrow), flags: .maskAlphaShift)]) { _ in
+      WindowManager.main.moveFrontmostWindow(direction: .up)
+    }
+    kb.register([KeyPress(key: .named(.downArrow), flags: .maskAlphaShift)]) { _ in
+      WindowManager.main.moveFrontmostWindow(direction: .down)
+    }
+    kb.register([KeyPress(key: .named(.leftArrow), flags: .maskAlphaShift)]) { _ in
+      WindowManager.main.moveFrontmostWindow(direction: .left)
+    }
+    kb.register([KeyPress(key: .named(.rightArrow), flags: .maskAlphaShift)]) { _ in
+      WindowManager.main.moveFrontmostWindow(direction: .right)
+    }
+
+    // CapsLock + Shift + Arrow keys for window resizing
+    kb.register([KeyPress(key: .named(.rightArrow), flags: [.maskAlphaShift, .maskShiftLeft, .maskShiftRight])]) { _ in
+      WindowManager.main.resizeFrontmostWindow(direction: .right)
+    }
+    kb.register([KeyPress(key: .named(.leftArrow), flags: [.maskAlphaShift, .maskShiftLeft, .maskShiftRight])]) { _ in
+      WindowManager.main.resizeFrontmostWindow(direction: .left)
+    }
+    kb.register([KeyPress(key: .named(.downArrow), flags: [.maskAlphaShift, .maskShiftLeft, .maskShiftRight])]) { _ in
+      WindowManager.main.resizeFrontmostWindow(direction: .down)
+    }
+    kb.register([KeyPress(key: .named(.upArrow), flags: [.maskAlphaShift, .maskShiftLeft, .maskShiftRight])]) { _ in
+      WindowManager.main.resizeFrontmostWindow(direction: .up)
+    }
   }
 }

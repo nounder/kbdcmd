@@ -401,4 +401,156 @@ public class WindowManager {
       }
     }
   }
+
+  // MARK: - Window Move/Resize
+
+  public enum Direction {
+    case up, down, left, right
+  }
+
+  /// Returns the screen bounds that contain the given point, or the main screen bounds if not found
+  private func screenBoundsContaining(point: CGPoint) -> CGRect {
+    // Convert from Quartz coordinates (top-left origin) to screen coordinates
+    guard let primaryScreen = NSScreen.screens.first else {
+      return CGRect(x: 0, y: 0, width: 1920, height: 1080)
+    }
+
+    let primaryHeight = primaryScreen.frame.height
+
+    for screen in NSScreen.screens {
+      // NSScreen uses bottom-left origin, Quartz uses top-left
+      // Convert screen frame to Quartz coordinates
+      let screenFrame = screen.frame
+      let quartzY = primaryHeight - screenFrame.maxY
+      let quartzFrame = CGRect(
+        x: screenFrame.minX,
+        y: quartzY,
+        width: screenFrame.width,
+        height: screenFrame.height
+      )
+
+      if quartzFrame.contains(point) {
+        // Return the visible frame (excludes menu bar and dock) in Quartz coordinates
+        let visibleFrame = screen.visibleFrame
+        let visibleQuartzY = primaryHeight - visibleFrame.maxY
+        return CGRect(
+          x: visibleFrame.minX,
+          y: visibleQuartzY,
+          width: visibleFrame.width,
+          height: visibleFrame.height
+        )
+      }
+    }
+
+    // Fallback to primary screen's visible frame
+    let visibleFrame = primaryScreen.visibleFrame
+    let visibleQuartzY = primaryHeight - visibleFrame.maxY
+    return CGRect(
+      x: visibleFrame.minX,
+      y: visibleQuartzY,
+      width: visibleFrame.width,
+      height: visibleFrame.height
+    )
+  }
+
+  /// Moves the frontmost window in the given direction by the specified step (default 60px)
+  /// Returns true if the window was moved, false if it couldn't be moved (at screen edge)
+  @discardableResult
+  public func moveFrontmostWindow(direction: Direction, step: CGFloat = 60) -> Bool {
+    guard let frontmostApp = getFrontmostApplication() else {
+      return false
+    }
+
+    let axApp = AXUIElementCreateApplication(frontmostApp.processIdentifier)
+    guard let focusedWindow = axApp.get(Ax.focusedWindowAttr) else {
+      return false
+    }
+
+    guard let currentPosition = focusedWindow.get(Ax.topLeftCornerAttr),
+          let currentSize = focusedWindow.get(Ax.sizeAttr) else {
+      return false
+    }
+
+    let screenBounds = screenBoundsContaining(point: currentPosition)
+
+    var newPosition = currentPosition
+
+    switch direction {
+    case .up:
+      newPosition.y -= step
+    case .down:
+      newPosition.y += step
+    case .left:
+      newPosition.x -= step
+    case .right:
+      newPosition.x += step
+    }
+
+    // Clamp to screen bounds
+    // Left edge
+    if newPosition.x < screenBounds.minX {
+      newPosition.x = screenBounds.minX
+    }
+    // Right edge: window's right edge shouldn't exceed screen's right edge
+    if newPosition.x + currentSize.width > screenBounds.maxX {
+      newPosition.x = screenBounds.maxX - currentSize.width
+    }
+    // Top edge
+    if newPosition.y < screenBounds.minY {
+      newPosition.y = screenBounds.minY
+    }
+    // Bottom edge: window's bottom edge shouldn't exceed screen's bottom edge
+    if newPosition.y + currentSize.height > screenBounds.maxY {
+      newPosition.y = screenBounds.maxY - currentSize.height
+    }
+
+    // If position hasn't changed (already at edge), return false
+    if newPosition.x == currentPosition.x && newPosition.y == currentPosition.y {
+      return false
+    }
+
+    return focusedWindow.set(Ax.topLeftCornerAttr, newPosition)
+  }
+
+  /// Resizes the frontmost window in the given direction by the specified step (default 60px)
+  /// Positive direction (right/down) increases size, negative direction (left/up) decreases size
+  /// Returns true if the window was resized, false if it couldn't be resized (at screen edge or minimum size)
+  @discardableResult
+  public func resizeFrontmostWindow(direction: Direction, step: CGFloat = 60) -> Bool {
+    guard let frontmostApp = getFrontmostApplication() else {
+      return false
+    }
+
+    let axApp = AXUIElementCreateApplication(frontmostApp.processIdentifier)
+    guard let focusedWindow = axApp.get(Ax.focusedWindowAttr) else {
+      return false
+    }
+
+    guard let currentPosition = focusedWindow.get(Ax.topLeftCornerAttr),
+          var currentSize = focusedWindow.get(Ax.sizeAttr) else {
+      return false
+    }
+
+    let screenBounds = screenBoundsContaining(point: currentPosition)
+    let minSize: CGFloat = 100  // Minimum window dimension
+
+    switch direction {
+    case .right:
+      // Increase width
+      let maxWidth = screenBounds.maxX - currentPosition.x
+      currentSize.width = min(currentSize.width + step, maxWidth)
+    case .left:
+      // Decrease width
+      currentSize.width = max(currentSize.width - step, minSize)
+    case .down:
+      // Increase height
+      let maxHeight = screenBounds.maxY - currentPosition.y
+      currentSize.height = min(currentSize.height + step, maxHeight)
+    case .up:
+      // Decrease height
+      currentSize.height = max(currentSize.height - step, minSize)
+    }
+
+    return focusedWindow.set(Ax.sizeAttr, currentSize)
+  }
 }
