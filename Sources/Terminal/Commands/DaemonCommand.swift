@@ -37,10 +37,6 @@ struct DaemonCommand: ParsableCommand {
       }
     }
 
-    kb.register([KeyPress(key: .character("O"), flags: .maskAlphaShift)]) { _ in
-      OverlayManager.shared.showHintOverlay()
-    }
-
     kb.register([KeyPress(key: .character("/"), flags: .maskCmdRight)]) { _ in
       OverlayManager.shared.showHintOverlay()
     }

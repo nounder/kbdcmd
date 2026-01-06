@@ -479,11 +479,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
       }
     }
 
-    // CapsLock + O for hints
-    kb.register([KeyPress(key: .character("O"), flags: .maskAlphaShift)]) { _ in
-      OverlayManager.shared.showHintOverlay()
-    }
-
     // Right Command + / for hints
     kb.register([KeyPress(key: .character("/"), flags: .maskCmdRight)]) { _ in
       OverlayManager.shared.showHintOverlay()
