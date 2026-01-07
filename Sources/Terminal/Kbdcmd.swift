@@ -3,7 +3,7 @@ import Core
 import Foundation
 
 @main
-struct Kbdcmd: ParsableCommand {
+struct Kbdcmd: AsyncParsableCommand {
   static let configuration = CommandConfiguration(
     commandName: "kbdcmd",
     abstract: "Keyboard Command for macOS",
@@ -16,6 +16,8 @@ struct Kbdcmd: ParsableCommand {
       SwitchDesktopCommand.self,
       SnapshotCommand.self,
       KeyboardCommand.self,
+      IntentCommand.self,
+      ShortcutCommand.self,
     ]
   )
 }
