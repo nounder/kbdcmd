@@ -20,6 +20,7 @@ struct Kbdcmd: AsyncParsableCommand {
       IntentCommand.self,
       ShortcutCommand.self,
       WindowListCommand.self,
+      PerformCommand.self,
     ]
   )
 }
