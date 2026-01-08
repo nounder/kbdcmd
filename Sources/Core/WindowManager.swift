@@ -148,8 +148,7 @@ public class WindowManager {
     tree.traverse { element, depth in
       guard depth <= 1 else { return .skipChildren }
 
-      let values = element.getAttributes(kAXTitleAttribute)
-      if let title = values[0] as? String, title == localizedFileMenu {
+      if let title = element.get(Ax.titleAttr), title == localizedFileMenu {
         fileMenu = element
         return .stop
       }
@@ -167,8 +166,7 @@ public class WindowManager {
 
     fileTree.traverse { element, depth in
       // Search by exact menu title (e.g., "New Window" or similar)
-      let values = element.getAttributes(kAXTitleAttribute)
-      if let itemTitle = values[0] as? String, itemTitle == localizedNewWindow {
+      if let itemTitle = element.get(Ax.titleAttr), itemTitle == localizedNewWindow {
         foundItem = element
         return .stop
       }

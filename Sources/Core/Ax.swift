@@ -7,13 +7,13 @@ import AppKit
 @discardableResult
 func _AXUIElementGetWindow(_ axUiElement: AXUIElement, _ id: inout CGWindowID) -> AXError
 
-protocol ReadableAttr {
+public protocol ReadableAttr {
   associatedtype T
   var getter: (AnyObject) -> T? { get }
   var key: String { get }
 }
 
-protocol WritableAttr: ReadableAttr {
+public protocol WritableAttr: ReadableAttr {
   var setter: (T) -> CFTypeRef? { get }
 }
 
@@ -156,51 +156,51 @@ protocol WritableAttr: ReadableAttr {
 // kAXFocusedApplicationAttribute
 // kAXElementBusyAttribute
 // kAXAlternateUIVisibleAttribute
-enum Ax {
-  struct ReadableAttrImpl<T>: ReadableAttr {
-    var key: String
-    var getter: (AnyObject) -> T?
+public enum Ax {
+  public struct ReadableAttrImpl<T>: ReadableAttr {
+    public var key: String
+    public var getter: (AnyObject) -> T?
   }
 
-  struct WritableAttrImpl<T>: WritableAttr {
-    var key: String
-    var getter: (AnyObject) -> T?
-    var setter: (T) -> CFTypeRef?
+  public struct WritableAttrImpl<T>: WritableAttr {
+    public var key: String
+    public var getter: (AnyObject) -> T?
+    public var setter: (T) -> CFTypeRef?
   }
 
-  static let titleAttr = WritableAttrImpl<String>(
+  public static let titleAttr = WritableAttrImpl<String>(
     key: kAXTitleAttribute,
     getter: { $0 as? String },
     setter: { $0 as CFTypeRef }
   )
-  static let roleAttr = WritableAttrImpl<String>(
+  public static let roleAttr = WritableAttrImpl<String>(
     key: kAXRoleAttribute,
     getter: { $0 as? String },
     setter: { $0 as CFTypeRef }
   )
-  static let subroleAttr = WritableAttrImpl<String>(
+  public static let subroleAttr = WritableAttrImpl<String>(
     key: kAXSubroleAttribute,
     getter: { $0 as? String },
     setter: { $0 as CFTypeRef }
   )
-  static let identifierAttr = ReadableAttrImpl<String>(
+  public static let identifierAttr = ReadableAttrImpl<String>(
     key: kAXIdentifierAttribute,
     getter: { $0 as? String }
   )
-  static let modalAttr = ReadableAttrImpl<Bool>(
+  public static let modalAttr = ReadableAttrImpl<Bool>(
     key: kAXModalAttribute,
     getter: { $0 as? Bool }
   )
-  static let enabledAttr = ReadableAttrImpl<Bool>(
+  public static let enabledAttr = ReadableAttrImpl<Bool>(
     key: kAXEnabledAttribute,
     getter: { $0 as? Bool }
   )
-  static let enhancedUserInterfaceAttr = WritableAttrImpl<Bool>(
+  public static let enhancedUserInterfaceAttr = WritableAttrImpl<Bool>(
     key: "AXEnhancedUserInterface",
     getter: { $0 as? Bool },
     setter: { $0 as CFTypeRef }
   )
-  static let minimizedAttr = WritableAttrImpl<Bool>(
+  public static let minimizedAttr = WritableAttrImpl<Bool>(
     key: kAXMinimizedAttribute,
     getter: { $0 as? Bool },
     setter: { $0 as CFTypeRef }
@@ -209,21 +209,21 @@ enum Ax {
   //    key: kAXMinimizedAttribute,
   //    getter: { $0 as? Bool }
   //)
-  static let isFullscreenAttr = WritableAttrImpl<Bool>(
+  public static let isFullscreenAttr = WritableAttrImpl<Bool>(
     key: "AXFullScreen",
     getter: { $0 as? Bool },
     setter: { $0 as CFTypeRef }
   )
-  static let isFocused = ReadableAttrImpl<Bool>(
+  public static let isFocused = ReadableAttrImpl<Bool>(
     key: kAXFocusedAttribute,
     getter: { $0 as? Bool }
   )
-  static let isMainAttr = WritableAttrImpl<Bool>(
+  public static let isMainAttr = WritableAttrImpl<Bool>(
     key: kAXMainAttribute,
     getter: { $0 as? Bool },
     setter: { $0 as CFTypeRef }
   )
-  static let sizeAttr = WritableAttrImpl<CGSize>(
+  public static let sizeAttr = WritableAttrImpl<CGSize>(
     key: kAXSizeAttribute,
     getter: {
       var raw: CGSize = .zero
@@ -237,7 +237,7 @@ enum Ax {
       return AXValueCreate(.cgSize, &size) as CFTypeRef
     }
   )
-  static let topLeftCornerAttr = WritableAttrImpl<CGPoint>(
+  public static let topLeftCornerAttr = WritableAttrImpl<CGPoint>(
     key: kAXPositionAttribute,
     getter: {
       var raw: CGPoint = .zero
@@ -251,11 +251,11 @@ enum Ax {
   )
   /// Returns windows visible on all monitors
   /// If some windows are located on not active macOS Spaces then they won't be returned
-  static let windowsAttr = ReadableAttrImpl<[AXUIElement]>(
+  public static let windowsAttr = ReadableAttrImpl<[AXUIElement]>(
     key: kAXWindowsAttribute,
     getter: { ($0 as! NSArray).compactMap(tryGetWindow) }
   )
-  static let focusedWindowAttr = ReadableAttrImpl<AXUIElement>(
+  public static let focusedWindowAttr = ReadableAttrImpl<AXUIElement>(
     key: kAXFocusedWindowAttribute,
     getter: tryGetWindow
   )
@@ -263,20 +263,20 @@ enum Ax {
   //    key: kAXMainWindowAttribute,
   //    getter: tryGetWindow
   //)
-  static let closeButtonAttr = ReadableAttrImpl<AXUIElement>(
+  public static let closeButtonAttr = ReadableAttrImpl<AXUIElement>(
     key: kAXCloseButtonAttribute,
     getter: { ($0 as! AXUIElement) }
   )
   // Note! fullscreen is not the same as "zoom" (green plus)
-  static let fullscreenButtonAttr = ReadableAttrImpl<AXUIElement>(
+  public static let fullscreenButtonAttr = ReadableAttrImpl<AXUIElement>(
     key: kAXFullScreenButtonAttribute,
     getter: { ($0 as! AXUIElement) }
   )
-  static let zoomButtonAttr = ReadableAttrImpl<AXUIElement>(
+  public static let zoomButtonAttr = ReadableAttrImpl<AXUIElement>(
     key: kAXZoomButtonAttribute,
     getter: { ($0 as! AXUIElement) }
   )
-  static let minimizeButtonAttr = ReadableAttrImpl<AXUIElement>(
+  public static let minimizeButtonAttr = ReadableAttrImpl<AXUIElement>(
     key: kAXMinimizeButtonAttribute,
     getter: { ($0 as! AXUIElement) }
   )
@@ -286,11 +286,11 @@ enum Ax {
   //)
   
   // Optimized child traversal attributes - returns only visible elements in containers
-  static let visibleChildrenAttr = ReadableAttrImpl<[AXUIElement]>(
+  public static let visibleChildrenAttr = ReadableAttrImpl<[AXUIElement]>(
     key: kAXVisibleChildrenAttribute as String,
     getter: { ($0 as! NSArray) as! [AXUIElement] }
   )
-  static let visibleRowsAttr = ReadableAttrImpl<[AXUIElement]>(
+  public static let visibleRowsAttr = ReadableAttrImpl<[AXUIElement]>(
     key: kAXVisibleRowsAttribute as String,
     getter: { ($0 as! NSArray) as! [AXUIElement] }
   )
@@ -303,7 +303,7 @@ private func tryGetWindow(_ any: Any?) -> AXUIElement? {
   return potentialWindow.containingWindowId() != nil ? potentialWindow : nil
 }
 
-extension AXUIElement {
+public extension AXUIElement {
   func get<Attr: ReadableAttr>(_ attr: Attr) -> Attr.T? {
     var raw: AnyObject?
     return AXUIElementCopyAttributeValue(self, attr.key as CFString, &raw) == .success

@@ -1,6 +1,13 @@
 import ApplicationServices
 import Foundation
 
+// MARK: - Configuration
+
+/// Number of concurrent threads for parallel AX attribute fetching.
+/// AX calls are blocking IPC, so parallelization can significantly reduce latency.
+/// Start with 2 threads; tune based on profiling results.
+public let kAXSnapshotWorkerCount = 2
+
 // MARK: - AXSnapshot
 
 /// A complete snapshot of an accessibility tree with timing information

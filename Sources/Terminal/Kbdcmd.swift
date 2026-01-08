@@ -15,9 +15,11 @@ struct Kbdcmd: AsyncParsableCommand {
       OpenCycleCommand.self,
       SwitchDesktopCommand.self,
       SnapshotCommand.self,
+      WalkerCommand.self,
       KeyboardCommand.self,
       IntentCommand.self,
       ShortcutCommand.self,
+      WindowListCommand.self,
     ]
   )
 }
