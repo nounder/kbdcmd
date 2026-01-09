@@ -75,6 +75,9 @@ struct WalkerCommand: AsyncParsableCommand {
   @Flag(name: .long, help: "Only show elements with width and height > 5px")
   var visual: Bool = false
 
+  @Flag(name: .long, help: "Hide title/description/value if empty or whitespace-only")
+  var noEmpty: Bool = false
+
   @MainActor
   func run() async throws {
     try Permissions.checkAccessibility()
@@ -163,9 +166,16 @@ struct WalkerCommand: AsyncParsableCommand {
       let children = getChildren(element)
       let hasChildren = !children.isEmpty && (maxDepth == nil || depth < maxDepth!)
 
-      // Skip empty groups
-      if noEmptyGroups && rawRole == "AXGroup" && children.isEmpty {
-        continue
+      // Skip empty groups and zero-size elements (unless they have actions)
+      if noEmptyGroups {
+        if rawRole == "AXGroup" && children.isEmpty {
+          continue
+        }
+        if let b = getBounds(element), b.width == 0 || b.height == 0 {
+          if getActions(element).isEmpty {
+            continue
+          }
+        }
       }
 
       // Skip scrollbar elements
@@ -216,15 +226,15 @@ struct WalkerCommand: AsyncParsableCommand {
         if !attrs.isEmpty { attrs += " " }
         attrs += "bounds=\"\(Int(b.origin.x)),\(Int(b.origin.y)),\(Int(b.width)),\(Int(b.height))\""
       }
-      if let title = title, !title.isEmpty {
+      if let title = title, hasContent(title) {
         if !attrs.isEmpty { attrs += " " }
         attrs += "title=\"\(truncate(title))\""
       }
-      if let value = value, !value.isEmpty {
+      if let value = value, hasContent(value) {
         if !attrs.isEmpty { attrs += " " }
         attrs += "value=\"\(truncate(value))\""
       }
-      let showDescription = description != nil && !description!.isEmpty && !(collapseTitle && description == title)
+      let showDescription = description != nil && hasContent(description!) && !(collapseTitle && description == title)
       if showDescription {
         if !attrs.isEmpty { attrs += " " }
         attrs += "description=\"\(truncate(description!))\""
@@ -550,6 +560,10 @@ struct WalkerCommand: AsyncParsableCommand {
 
   private func truncate(_ string: String, max: Int = 100) -> String {
     string.count > max ? String(string.prefix(max)) + "..." : string
+  }
+
+  private func hasContent(_ string: String) -> Bool {
+    noEmpty ? !string.trimmingCharacters(in: .whitespaces).isEmpty : !string.isEmpty
   }
 
   private func hyphenize(_ string: String) -> String {
