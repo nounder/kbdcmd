@@ -36,16 +36,16 @@ struct PerformCommand: AsyncParsableCommand {
   @Argument(help: "Coordinates (x,y or bounds x,y,w,h), text for type, or key name")
   var operand: String?
 
-  @Option(name: .long, help: "Filter by app name or bundle ID (only for AX actions)")
+  @Option(name: .long, help: "Target specific app by name or bundle ID (AX actions only, auto-detected if omitted)")
   var app: String?
 
-  @Option(name: .long, help: "Filter by window title (only for AX actions)")
+  @Option(name: .long, help: "Target specific window by title (AX actions only, auto-detected if omitted)")
   var title: String?
 
-  @Option(name: .long, help: "Filter by process ID (only for AX actions)")
+  @Option(name: .long, help: "Target specific app by process ID (AX actions only, auto-detected if omitted)")
   var pid: pid_t?
 
-  @Option(name: .long, help: "Filter by CGWindowID (only for AX actions)")
+  @Option(name: .long, help: "Target specific window by CGWindowID (AX actions only, auto-detected if omitted)")
   var cgid: Int?
 
   @Flag(name: .long, help: "Print debug information")
@@ -132,22 +132,14 @@ struct PerformCommand: AsyncParsableCommand {
       }
       root = window
     } else {
-      guard let frontApp = NSWorkspace.shared.frontmostApplication else {
-        throw ValidationError("No frontmost application found")
+      // Auto-detect window at coordinates
+      guard let (window, runningApp) = findWindowAtPoint(point) else {
+        throw ValidationError("No window found at (\(Int(x)),\(Int(y)))")
       }
-      let appElement = AXUIElementCreateApplication(frontApp.processIdentifier)
-      var focusedWindow: AnyObject?
-      guard AXUIElementCopyAttributeValue(
-        appElement,
-        kAXFocusedWindowAttribute as CFString,
-        &focusedWindow
-      ) == .success,
-            let window = focusedWindow,
-            CFGetTypeID(window as CFTypeRef) == AXUIElementGetTypeID()
-      else {
-        throw ValidationError("No focused window found")
-      }
-      root = window as! AXUIElement
+      AXUIElementPerformAction(window, kAXRaiseAction as CFString)
+      runningApp.activate()
+      usleep(50000)
+      root = window
     }
 
     // Find element at coordinates that supports the action
