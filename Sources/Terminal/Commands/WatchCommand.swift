@@ -48,7 +48,7 @@ struct WatchCommand: AsyncParsableCommand {
   @Option(name: .long, help: "Stop when an event matches this query (e.g., type=AXValueChanged)")
   var until: [String] = []
 
-  @Option(name: .shortAndLong, help: "Fields to output (e.g., -f time,app or -f time -f app). Available: time, app, type, role, desc, subrole, bounds, display, title, label, value, text")
+  @Option(name: .shortAndLong, help: "Fields to output (e.g., -f time,app or -f _,label). Use _ for defaults (time,app,type,role,bounds). Available: time, app, type, role, desc, subrole, bounds, display, title, label, value")
   var field: [String] = []
 
   @MainActor
@@ -59,11 +59,14 @@ struct WatchCommand: AsyncParsableCommand {
     let untilFilter = try until.isEmpty ? nil : QueryFilter(conditions: until)
 
     // Parse fields: support both "-f time,app" and "-f time -f app"
+    // Use "_" to insert default fields at that position
+    let defaultFields = ["time", "app", "type", "role", "bounds"]
     let fields: [String]
     if field.isEmpty {
-      fields = ["time", "app", "type", "role", "bounds"]
+      fields = defaultFields
     } else {
       fields = field.flatMap { $0.split(separator: ",").map(String.init) }
+        .flatMap { $0 == "_" ? defaultFields : [$0] }
     }
 
     let watcher = NotificationWatcher(
@@ -101,6 +104,7 @@ private final class NotificationWatcher {
   private let maxDepth: Int
   private let verbose: Bool
   private let fields: [String]
+  private let neededFields: Set<String>
   private let queryFilter: QueryFilter?
   private let untilFilter: QueryFilter?
   private(set) var shouldStop: Bool = false
@@ -159,6 +163,16 @@ private final class NotificationWatcher {
     self.fields = fields
     self.queryFilter = queryFilter
     self.untilFilter = untilFilter
+
+    // Compute all fields needed for output and filtering
+    var needed = Set(fields)
+    if let filter = queryFilter {
+      needed.formUnion(filter.usedFields)
+    }
+    if let filter = untilFilter {
+      needed.formUnion(filter.usedFields)
+    }
+    self.neededFields = needed
   }
 
   func start() {
@@ -361,19 +375,20 @@ private final class NotificationWatcher {
     var pid: pid_t = 0
     AXUIElementGetPid(element, &pid)
 
-    let bounds = getBounds(element)
-    let display = bounds.flatMap { getDisplayIndex(for: $0.origin) }
+    // Only query attributes that are needed for output or filtering
+    let bounds = neededFields.contains("bounds") || neededFields.contains("display") ? getBounds(element) : nil
+    let display = neededFields.contains("display") ? bounds.flatMap { getDisplayIndex(for: $0.origin) } : nil
 
     let notif = WatchNotification(
       time: timestamp(),
       type: extractNotificationType(notification),
       app: NSRunningApplication(processIdentifier: pid)?.localizedName ?? "Unknown",
-      role: getAttr(element, kAXRoleAttribute) ?? "Unknown",
-      desc: getAttr(element, kAXRoleDescriptionAttribute),
-      subrole: getAttr(element, kAXSubroleAttribute),
-      title: getAttr(element, kAXTitleAttribute),
-      label: getAttr(element, kAXDescriptionAttribute),
-      value: getAttr(element, kAXValueAttribute),
+      role: neededFields.contains("role") ? (getAttr(element, kAXRoleAttribute) ?? "Unknown") : "Unknown",
+      desc: neededFields.contains("desc") ? getAttr(element, kAXRoleDescriptionAttribute) : nil,
+      subrole: neededFields.contains("subrole") ? getAttr(element, kAXSubroleAttribute) : nil,
+      title: neededFields.contains("title") ? getAttr(element, kAXTitleAttribute) : nil,
+      label: neededFields.contains("label") ? getAttr(element, kAXDescriptionAttribute) : nil,
+      value: neededFields.contains("value") ? getAttr(element, kAXValueAttribute) : nil,
       bounds: bounds,
       display: display
     )
@@ -479,7 +494,6 @@ private struct WatchNotification {
     case "title": return title
     case "label": return label
     case "value": return value
-    case "text": return title ?? label ?? value
     case "bounds": return bounds.map { formatBounds($0) }
     case "display": return display.map { String($0) }
     default: return nil
@@ -494,10 +508,9 @@ private struct WatchNotification {
     var parts: [String] = []
 
     for fieldName in fields {
-      if let value = field(fieldName) {
-        let escaped = escape(truncate(value, max: truncateLength))
-        parts.append("\(fieldName)=\"\(escaped)\"")
-      }
+      let value = field(fieldName) ?? ""
+      let escaped = escape(truncate(value, max: truncateLength))
+      parts.append("\(fieldName)=\"\(escaped)\"")
     }
 
     return parts.joined(separator: "\t")
@@ -625,5 +638,9 @@ private struct QueryFilter {
     let appConditions = conditions.filter { $0.field == "app" }
     guard !appConditions.isEmpty else { return true }
     return appConditions.allSatisfy { $0.matchesValue(appName) }
+  }
+
+  var usedFields: Set<String> {
+    Set(conditions.map { $0.field })
   }
 }
