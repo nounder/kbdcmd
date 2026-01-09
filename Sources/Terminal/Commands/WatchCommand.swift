@@ -158,7 +158,8 @@ private final class NotificationWatcher {
   }
 
   private func setupWorkspaceNotifications() {
-    let launchObserver = NotificationCenter.default.addObserver(
+    let workspace = NSWorkspace.shared
+    let launchObserver = workspace.notificationCenter.addObserver(
       forName: NSWorkspace.didLaunchApplicationNotification,
       object: nil,
       queue: .main
@@ -166,11 +167,11 @@ private final class NotificationWatcher {
       guard let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication else {
         return
       }
-      self?.addObserverForApp(app)
+      self?.addObserverForApp(app, isLaunch: true)
     }
     workspaceObservers.append(launchObserver)
 
-    let terminateObserver = NotificationCenter.default.addObserver(
+    let terminateObserver = workspace.notificationCenter.addObserver(
       forName: NSWorkspace.didTerminateApplicationNotification,
       object: nil,
       queue: .main
@@ -185,7 +186,7 @@ private final class NotificationWatcher {
 
   private func removeWorkspaceNotifications() {
     for observer in workspaceObservers {
-      NotificationCenter.default.removeObserver(observer)
+      NSWorkspace.shared.notificationCenter.removeObserver(observer)
     }
     workspaceObservers.removeAll()
   }
@@ -198,7 +199,7 @@ private final class NotificationWatcher {
     }
   }
 
-  private func addObserverForApp(_ app: NSRunningApplication) {
+  private func addObserverForApp(_ app: NSRunningApplication, isLaunch: Bool = false) {
     guard app.activationPolicy == .regular else { return }
 
     let pid = app.processIdentifier
@@ -254,10 +255,11 @@ private final class NotificationWatcher {
 
     observers.append((pid: pid, observer: observer))
 
+    let prefix = isLaunch ? "Launch detected" : "Watching"
     if verbose {
-      output("[\(timestamp())] Watching \(appName) (pid: \(pid)) - \(elementCount) elements")
+      output("[\(timestamp())] \(prefix): \(appName) (pid: \(pid)) - \(elementCount) elements")
     } else {
-      output("[\(timestamp())] Watching \(appName)")
+      output("[\(timestamp())] \(prefix): \(appName)")
     }
   }
 

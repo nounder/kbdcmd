@@ -16,6 +16,8 @@ public struct ApplicationManager {
 
     let searchPaths = [
       "/Applications",
+      "/System/Applications",
+      "/System/Applications/Utilities",
       fileManager.homeDirectoryForCurrentUser.appendingPathComponent("Applications").path,
     ]
 
