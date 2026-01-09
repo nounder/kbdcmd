@@ -14,15 +14,22 @@ struct WatchCommand: AsyncParsableCommand {
       Performs a shallow traversal of each app's accessibility tree and registers for notifications
       on discovered elements.
 
+      Filtering: Use logfmt-style queries to filter output
+        field=value           # Exact match
+        field!=value          # Not equal
+        field~pattern         # Glob pattern (* and ?)
+        field!~pattern        # Not matching pattern
+        field>value           # Greater than (numeric)
+        field<value           # Less than (numeric)
+
       Examples:
-        kbdcmd watch                    # Watch all apps
-        kbdcmd watch --app Music        # Watch only Music app
-        kbdcmd watch --depth 2          # Traverse 2 levels deep
+        kbdcmd watch                                  # Watch all apps
+        kbdcmd watch --app Music                      # Watch only Music app
+        kbdcmd watch --query 'app=Music'              # Filter by app
+        kbdcmd watch -q 'app=Music' -q 'role!=AXStaticText'  # Multiple filters (AND)
+        kbdcmd watch --query 'type~AXValue*'          # Pattern matching
       """
   )
-
-  @Option(name: .long, help: "Filter by application name or bundle ID")
-  var app: String?
 
   @Option(name: .long, help: "Maximum depth to traverse (default: 1)")
   var depth: Int = 1
@@ -30,14 +37,19 @@ struct WatchCommand: AsyncParsableCommand {
   @Flag(name: .long, help: "Include element details in output")
   var verbose: Bool = false
 
+  @Option(name: .shortAndLong, help: "Filter output with logfmt-style queries (e.g., app=Music role!=AXStaticText)")
+  var query: [String] = []
+
   @MainActor
   func run() async throws {
     try Permissions.checkAccessibility()
 
+    let queryFilter = try query.isEmpty ? nil : QueryFilter(conditions: query)
+
     let watcher = NotificationWatcher(
-      appFilter: app,
       maxDepth: depth,
-      verbose: verbose
+      verbose: verbose,
+      queryFilter: queryFilter
     )
 
     watcher.start()
@@ -56,9 +68,9 @@ struct WatchCommand: AsyncParsableCommand {
 private final class NotificationWatcher {
   private var observers: [(pid: pid_t, observer: AXObserver)] = []
   private var workspaceObservers: [NSObjectProtocol] = []
-  private let appFilter: String?
   private let maxDepth: Int
   private let verbose: Bool
+  private let queryFilter: QueryFilter?
 
   private static let allNotifications: [String] = [
     // Application notifications
@@ -108,10 +120,10 @@ private final class NotificationWatcher {
     kAXHelpTagCreatedNotification,
   ]
 
-  init(appFilter: String?, maxDepth: Int, verbose: Bool) {
-    self.appFilter = appFilter
+  init(maxDepth: Int, verbose: Bool, queryFilter: QueryFilter? = nil) {
     self.maxDepth = maxDepth
     self.verbose = verbose
+    self.queryFilter = queryFilter
   }
 
   func start() {
@@ -167,16 +179,6 @@ private final class NotificationWatcher {
 
   private func addObserverForApp(_ app: NSRunningApplication) {
     guard app.activationPolicy == .regular else { return }
-
-    if let filter = appFilter {
-      let appName = app.localizedName ?? ""
-      let bundleId = app.bundleIdentifier ?? ""
-      let matches = appName.localizedCaseInsensitiveContains(filter)
-        || bundleId.localizedCaseInsensitiveContains(filter)
-      if !matches {
-        return
-      }
-    }
 
     let pid = app.processIdentifier
     let appName = app.localizedName ?? "Unknown"
@@ -326,6 +328,11 @@ private final class NotificationWatcher {
       }
     }
 
+    // Apply query filter before outputting
+    if let filter = queryFilter {
+      guard filter.matches(line: output) else { return }
+    }
+
     self.output(output)
   }
 
@@ -373,5 +380,115 @@ private final class NotificationWatcher {
   private func output(_ message: String) {
     print(message)
     fflush(stdout)
+  }
+}
+
+private struct QueryFilter {
+  enum MatchOperator {
+    case equals
+    case notEquals
+    case glob
+    case notGlob
+    case greaterThan
+    case lessThan
+  }
+
+  struct Condition {
+    let field: String
+    let op: MatchOperator
+    let pattern: String
+
+    func matches(in line: String) -> Bool {
+      guard let value = extractFieldValue(field, from: line) else { return false }
+
+      switch op {
+      case .equals:
+        return value == pattern
+      case .notEquals:
+        return value != pattern
+      case .glob:
+        return matches(value: value, glob: pattern)
+      case .notGlob:
+        return !matches(value: value, glob: pattern)
+      case .greaterThan:
+        return (Double(value) ?? 0) > (Double(pattern) ?? 0)
+      case .lessThan:
+        return (Double(value) ?? 0) < (Double(pattern) ?? 0)
+      }
+    }
+
+    private func matches(value: String, glob: String) -> Bool {
+      let regex = NSRegularExpression.escapedPattern(for: glob)
+        .replacingOccurrences(of: "\\*", with: ".*")
+        .replacingOccurrences(of: "\\?", with: ".")
+      guard let regex = try? NSRegularExpression(pattern: "^\(regex)$") else {
+        return false
+      }
+      return regex.firstMatch(in: value, range: NSRange(value.startIndex..., in: value)) != nil
+    }
+
+    private func extractFieldValue(_ field: String, from line: String) -> String? {
+      let pattern = "\(NSRegularExpression.escapedPattern(for: field))=\"([^\"]*)\""
+      guard let regex = try? NSRegularExpression(pattern: pattern) else { return nil }
+      guard let match = regex.firstMatch(in: line, range: NSRange(line.startIndex..., in: line)) else { return nil }
+      guard let range = Range(match.range(at: 1), in: line) else { return nil }
+      return String(line[range])
+    }
+  }
+
+  let conditions: [Condition]
+
+  init(conditions: [String]) throws {
+    var parsed: [Condition] = []
+    for condition in conditions {
+      let parts = condition.split(separator: " ", omittingEmptySubsequences: true)
+      for part in parts {
+        let condition = try QueryFilter.parseCondition(String(part))
+        parsed.append(condition)
+      }
+    }
+    self.conditions = parsed
+  }
+
+  static func parseCondition(_ condition: String) throws -> Condition {
+    let operators: [(String, MatchOperator)] = [
+      ("!=", .notEquals),
+      ("!~", .notGlob),
+      ("<=", .lessThan),
+      (">=", .greaterThan),
+      ("=", .equals),
+      ("~", .glob),
+      (">", .greaterThan),
+      ("<", .lessThan),
+    ]
+
+    for (opString, op) in operators {
+      guard let range = condition.range(of: opString) else { continue }
+      let field = String(condition[..<range.lowerBound])
+      var pattern = String(condition[range.upperBound...])
+
+      // Validate field name (non-empty, alphanumeric + underscore)
+      guard !field.isEmpty && field.allSatisfy({ $0.isLetter || $0.isNumber || $0 == "_" }) else {
+        throw NSError(domain: "QueryFilter", code: 1, userInfo: [NSLocalizedDescriptionKey: "Invalid field name: '\(field)'. Must be alphanumeric."])
+      }
+
+      // Check for invalid double operators like ==
+      if opString == "=" && pattern.hasPrefix("=") {
+        throw NSError(domain: "QueryFilter", code: 1, userInfo: [NSLocalizedDescriptionKey: "Invalid operator '=='. Did you mean '='? Use operators: =, !=, ~, !~, >, <"])
+      }
+
+      // Remove surrounding quotes if present
+      if pattern.hasPrefix("\"") && pattern.hasSuffix("\"") {
+        pattern = String(pattern.dropFirst().dropLast())
+      }
+
+      return Condition(field: field, op: op, pattern: pattern)
+    }
+
+    throw NSError(domain: "QueryFilter", code: 1, userInfo: [NSLocalizedDescriptionKey: "Invalid query condition: '\(condition)'. Use operators: =, !=, ~, !~, >, <"])
+  }
+
+  func matches(line: String) -> Bool {
+    conditions.allSatisfy { $0.matches(in: line) }
   }
 }
