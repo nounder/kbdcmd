@@ -48,7 +48,7 @@ struct WatchCommand: AsyncParsableCommand {
   @Option(name: .long, help: "Stop when an event matches this query (e.g., type=AXValueChanged)")
   var until: [String] = []
 
-  @Option(name: .shortAndLong, help: "Fields to output (e.g., -f time,app or -f time -f app). Available: time, app, type, role, bounds, display, title, desc, value, text")
+  @Option(name: .shortAndLong, help: "Fields to output (e.g., -f time,app or -f time -f app). Available: time, app, type, role, desc, subrole, bounds, display, title, label, value, text")
   var field: [String] = []
 
   @MainActor
@@ -369,8 +369,10 @@ private final class NotificationWatcher {
       type: extractNotificationType(notification),
       app: NSRunningApplication(processIdentifier: pid)?.localizedName ?? "Unknown",
       role: getAttr(element, kAXRoleAttribute) ?? "Unknown",
+      desc: getAttr(element, kAXRoleDescriptionAttribute),
+      subrole: getAttr(element, kAXSubroleAttribute),
       title: getAttr(element, kAXTitleAttribute),
-      desc: getAttr(element, kAXDescriptionAttribute),
+      label: getAttr(element, kAXDescriptionAttribute),
       value: getAttr(element, kAXValueAttribute),
       bounds: bounds,
       display: display
@@ -458,8 +460,10 @@ private struct WatchNotification {
   let type: String
   let app: String
   let role: String
-  let title: String?
   let desc: String?
+  let subrole: String?
+  let title: String?
+  let label: String?
   let value: String?
   let bounds: CGRect?
   let display: Int?
@@ -470,10 +474,12 @@ private struct WatchNotification {
     case "type": return type
     case "app": return app
     case "role": return role
-    case "title": return title
     case "desc": return desc
+    case "subrole": return subrole
+    case "title": return title
+    case "label": return label
     case "value": return value
-    case "text": return title ?? desc ?? value
+    case "text": return title ?? label ?? value
     case "bounds": return bounds.map { formatBounds($0) }
     case "display": return display.map { String($0) }
     default: return nil
