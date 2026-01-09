@@ -306,7 +306,7 @@ private final class NotificationWatcher {
     let notificationType = extractNotificationType(notification)
 
     // Build structured output
-    var output = "time=\"\(timestamp())\" type=\(notificationType) app=\(appName) role=\(role)"
+    var output = "time=\(timestamp()) type=\(escapeUnquoted(notificationType)) app=\(escapeUnquoted(appName)) role=\(escapeUnquoted(role))"
 
     if verbose {
       if let title = title, !title.isEmpty {
@@ -348,6 +348,13 @@ private final class NotificationWatcher {
       result = String(result.dropLast("Notification".count))
     }
     return result
+  }
+
+  private func escapeUnquoted(_ string: String) -> String {
+    // Escape spaces and backslashes for unquoted values
+    return string
+      .replacingOccurrences(of: "\\", with: "\\\\")
+      .replacingOccurrences(of: " ", with: "\\ ")
   }
 
   private func escapeAttribute(_ string: String) -> String {
