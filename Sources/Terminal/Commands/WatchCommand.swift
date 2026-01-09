@@ -351,9 +351,12 @@ private final class NotificationWatcher {
   }
 
   private func escapeQuoted(_ string: String) -> String {
-    // Escape backslashes and quotes for quoted values
+    // Escape backslashes, quotes, and newlines for quoted values
     return string
       .replacingOccurrences(of: "\\", with: "\\\\")
+      .replacingOccurrences(of: "\r\n", with: "\\r\\n")  // Windows newline first
+      .replacingOccurrences(of: "\n", with: "\\n")       // Unix newline
+      .replacingOccurrences(of: "\r", with: "\\r")       // Mac newline
       .replacingOccurrences(of: "\"", with: "\\\"")
   }
 
