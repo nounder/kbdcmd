@@ -66,6 +66,9 @@ struct WalkerCommand: AsyncParsableCommand {
   @Flag(name: .long, help: "Include available actions")
   var action: Bool = false
 
+  @Option(name: .long, help: "Include actions matching pattern (glob: 'AX*', list: 'AXPress,AXScroll')")
+  var actionP: String?
+
   @Flag(name: .long, help: "Include action descriptions as values")
   var actionDesc: Bool = false
 
@@ -79,6 +82,18 @@ struct WalkerCommand: AsyncParsableCommand {
     let filterCount = [cgid != nil, app != nil, title != nil, pid != nil].filter { $0 }.count
     if filterCount > 1 {
       throw ValidationError("--cgid, --app, --title, and --pid are mutually exclusive")
+    }
+
+    if action && actionP != nil {
+      throw ValidationError("--action and --action-p are mutually exclusive")
+    }
+
+    let actionMatcher: ((String) -> Bool)? = if let pattern = actionP {
+      { self.matchesFilter($0, pattern: pattern) }
+    } else if action {
+      { _ in true }
+    } else {
+      nil
     }
 
     let root: AXUIElement
@@ -144,7 +159,7 @@ struct WalkerCommand: AsyncParsableCommand {
 
       let nodeId = parentId.map { "\($0)-\(siblingIndex)" } ?? "#0"
       let rawRole = getAttr(element, kAXRoleAttribute) as? String ?? "Unknown"
-      let title = (getAttr(element, kAXTitleAttribute) as? String).map { escapeXml($0) }
+      let title = (getAttr(element, kAXTitleAttribute) as? String).map { escapeAttribute($0) }
       let children = getChildren(element)
       let hasChildren = !children.isEmpty && (maxDepth == nil || depth < maxDepth!)
 
@@ -169,10 +184,10 @@ struct WalkerCommand: AsyncParsableCommand {
         }
       }
 
-      let value = (getAttr(element, kAXValueAttribute) as? String).map { escapeXml($0) }
-      let description = (getAttr(element, kAXDescriptionAttribute) as? String).map { escapeXml($0) }
+      let value = (getAttr(element, kAXValueAttribute) as? String).map { escapeAttribute($0) }
+      let description = (getAttr(element, kAXDescriptionAttribute) as? String).map { escapeAttribute($0) }
       let rawRoleDescription = getAttr(element, kAXRoleDescriptionAttribute) as? String
-      let label = (getAttr(element, "AXLabel") as? String).map { escapeXml($0) }
+      let label = (getAttr(element, "AXLabel") as? String).map { escapeAttribute($0) }
 
       let role: String
       let showRoleDescription: Bool
@@ -180,14 +195,14 @@ struct WalkerCommand: AsyncParsableCommand {
         role = customTag
         showRoleDescription = false
       } else if roleTag, let rd = rawRoleDescription, !rd.isEmpty, rd.lowercased() != "unknown" {
-        role = escapeXml(hyphenize(rd))
+        role = escapeAttribute(hyphenize(rd))
         showRoleDescription = false
       } else {
         // If rawRole is "Unknown" and we have --role-tag, show the AX role for debugging
         if roleTag && rawRole == "Unknown" {
           role = "AXUnknown"
         } else {
-          role = escapeXml(rawRole)
+          role = escapeAttribute(rawRole)
         }
         showRoleDescription = rawRoleDescription != nil && !rawRoleDescription!.isEmpty && rawRoleDescription!.lowercased() != "unknown"
       }
@@ -195,7 +210,7 @@ struct WalkerCommand: AsyncParsableCommand {
       let indent = String(repeating: "  ", count: depth)
       var attrs = ""
       if id {
-        attrs += "id=\"\(escapeXml(nodeId))\""
+        attrs += "id=\"\(escapeAttribute(nodeId))\""
       }
       if bounds, let b = getBounds(element) {
         if !attrs.isEmpty { attrs += " " }
@@ -216,22 +231,18 @@ struct WalkerCommand: AsyncParsableCommand {
       }
       if showRoleDescription, let rd = rawRoleDescription {
         if !attrs.isEmpty { attrs += " " }
-        attrs += "roleDescription=\"\(truncate(escapeXml(rd)))\""
+        attrs += "roleDescription=\"\(truncate(escapeAttribute(rd)))\""
       }
       if let label = label, !label.isEmpty {
         if !attrs.isEmpty { attrs += " " }
         attrs += "label=\"\(truncate(label))\""
       }
-      if isDisabled(element) {
-        if !attrs.isEmpty { attrs += " " }
-        attrs += "disabled"
-      }
-      if action {
-        let actionNames = getActions(element)
+      if let actionMatcher = actionMatcher {
+        let actionNames = getActions(element).filter(actionMatcher)
         for actionName in actionNames {
           if !attrs.isEmpty { attrs += " " }
           if actionDesc, let desc = getActionDescription(element, actionName), !desc.isEmpty {
-            attrs += "action:\(actionName)=\"\(escapeXml(desc))\""
+            attrs += "action:\(actionName)=\"\(escapeAttribute(desc))\""
           } else {
             attrs += "action:\(actionName)"
           }
@@ -242,7 +253,7 @@ struct WalkerCommand: AsyncParsableCommand {
       if inlineText && rawRole == "AXStaticText" {
         let textContent = (getAttr(element, kAXValueAttribute) as? String) ?? (getAttr(element, kAXTitleAttribute) as? String) ?? ""
         if !textContent.isEmpty {
-          print("\(indent)\(escapeXml(textContent))")
+          print("\(indent)\(escapeAttribute(textContent))")
         }
       } else {
         let attrStr = attrs.isEmpty ? "" : " \(attrs)"
@@ -475,17 +486,6 @@ struct WalkerCommand: AsyncParsableCommand {
     (getAttr(element, kAXChildrenAttribute) as? [AXUIElement]) ?? []
   }
 
-  private func isDisabled(_ element: AXUIElement) -> Bool {
-    var value: CFTypeRef?
-    guard AXUIElementCopyAttributeValue(element, kAXEnabledAttribute as CFString, &value) == .success else {
-      return false
-    }
-    guard CFGetTypeID(value) == CFBooleanGetTypeID() else {
-      return false
-    }
-    return !CFBooleanGetValue(value as! CFBoolean)
-  }
-
   private func getActions(_ element: AXUIElement) -> [String] {
     var names: CFArray?
     guard AXUIElementCopyActionNames(element, &names) == .success,
@@ -526,12 +526,26 @@ struct WalkerCommand: AsyncParsableCommand {
     return CGRect(origin: point, size: sz)
   }
 
-  private func escapeXml(_ string: String) -> String {
-    string
-      .replacingOccurrences(of: "&", with: "&amp;")
-      .replacingOccurrences(of: "<", with: "&lt;")
-      .replacingOccurrences(of: ">", with: "&gt;")
-      .replacingOccurrences(of: "\"", with: "&quot;")
+  /// Escapes a string for use in HTML5-like output.
+  ///
+  /// Only escapes characters that would break parsing:
+  /// - `<` → `&lt;` (would start a tag)
+  /// - `"` → `&quot;` (would end an attribute value)
+  ///
+  /// Unlike strict XML, we don't escape:
+  /// - `&` (kept as-is for readability, e.g., "Foo & Bar")
+  /// - `>` (safe outside of tags)
+  private func escapeAttribute(_ string: String) -> String {
+    var result = ""
+    result.reserveCapacity(string.count)
+    for char in string {
+      switch char {
+      case "<": result += "&lt;"
+      case "\"": result += "&quot;"
+      default: result.append(char)
+      }
+    }
+    return result
   }
 
   private func truncate(_ string: String, max: Int = 100) -> String {
@@ -546,5 +560,17 @@ struct WalkerCommand: AsyncParsableCommand {
     [
       "AXWindow": "window",
     ]
+  }
+
+  private func matchesFilter(_ input: String, pattern: String) -> Bool {
+    let patterns = pattern.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
+
+    return patterns.contains { p in
+      if p.contains("*") || p.contains("?") {
+        return fnmatch(p, input, 0) == 0
+      } else {
+        return input == p
+      }
+    }
   }
 }
