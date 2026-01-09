@@ -19,6 +19,8 @@ struct WalkerCommand: AsyncParsableCommand {
         kbdcmd walker                    # Walk focused window
         kbdcmd walker --max-depth 5      # Limit traversal to 5 levels deep
         kbdcmd walker --all-windows      # Walk entire app
+        kbdcmd walker --title "My Doc"   # Walk window with matching title
+        kbdcmd walker --pid 12345        # Walk window by process ID
       """
   )
 
@@ -30,6 +32,12 @@ struct WalkerCommand: AsyncParsableCommand {
 
   @Option(name: .long, help: "Filter by application name or bundle ID")
   var app: String?
+
+  @Option(name: .long, help: "Filter by window title")
+  var title: String?
+
+  @Option(name: .long, help: "Filter by process ID")
+  var pid: pid_t?
 
   @Flag(name: .long, help: "Include element IDs")
   var id: Bool = false
@@ -61,12 +69,16 @@ struct WalkerCommand: AsyncParsableCommand {
   @Flag(name: .long, help: "Include action descriptions as values")
   var actionDesc: Bool = false
 
+  @Flag(name: .long, help: "Only show elements with width and height > 5px")
+  var visual: Bool = false
+
   @MainActor
   func run() async throws {
     try Permissions.checkAccessibility()
 
-    if cgid != nil && app != nil {
-      throw ValidationError("--cgid and --app are mutually exclusive")
+    let filterCount = [cgid != nil, app != nil, title != nil, pid != nil].filter { $0 }.count
+    if filterCount > 1 {
+      throw ValidationError("--cgid, --app, --title, and --pid are mutually exclusive")
     }
 
     let root: AXUIElement
@@ -79,6 +91,16 @@ struct WalkerCommand: AsyncParsableCommand {
     } else if let app = app {
       guard let window = findWindowByApp(app) else {
         throw ValidationError("No window found for app '\(app)'")
+      }
+      root = window
+    } else if let title = title {
+      guard let window = findWindowByTitle(title) else {
+        throw ValidationError("No window found with title '\(title)'")
+      }
+      root = window
+    } else if let pid = pid {
+      guard let window = findWindowByPid(pid) else {
+        throw ValidationError("No window found for pid \(pid)")
       }
       root = window
     } else if allWindows {
@@ -136,6 +158,17 @@ struct WalkerCommand: AsyncParsableCommand {
         continue
       }
 
+      // Skip elements smaller than 5px
+      if visual {
+        if let b = getBounds(element) {
+          if b.width <= 5 || b.height <= 5 {
+            continue
+          }
+        } else {
+          continue
+        }
+      }
+
       let value = (getAttr(element, kAXValueAttribute) as? String).map { escapeXml($0) }
       let description = (getAttr(element, kAXDescriptionAttribute) as? String).map { escapeXml($0) }
       let rawRoleDescription = getAttr(element, kAXRoleDescriptionAttribute) as? String
@@ -188,6 +221,10 @@ struct WalkerCommand: AsyncParsableCommand {
       if let label = label, !label.isEmpty {
         if !attrs.isEmpty { attrs += " " }
         attrs += "label=\"\(truncate(label))\""
+      }
+      if isDisabled(element) {
+        if !attrs.isEmpty { attrs += " " }
+        attrs += "disabled"
       }
       if action {
         let actionNames = getActions(element)
@@ -315,6 +352,117 @@ struct WalkerCommand: AsyncParsableCommand {
     return nil
   }
 
+  private func findWindowByTitle(_ titleFilter: String) -> AXUIElement? {
+    let runningApps = NSWorkspace.shared.runningApplications
+
+    for app in runningApps {
+      guard app.activationPolicy == .regular else {
+        continue
+      }
+
+      let axApp = AXUIElementCreateApplication(app.processIdentifier)
+
+      guard let axWindows = axApp.get(Ax.windowsAttr) else {
+        continue
+      }
+
+      for axWindow in axWindows {
+        guard axWindow.containingWindowId() != nil else {
+          continue
+        }
+
+        let role = axWindow.get(Ax.roleAttr)
+        if let role = role, role != "AXWindow" {
+          continue
+        }
+
+        let subrole = axWindow.get(Ax.subroleAttr)
+        if let subrole = subrole {
+          let excludedSubroles = ["AXSystemDialog", "AXDialog", "AXUnknown"]
+          if excludedSubroles.contains(subrole) {
+            continue
+          }
+        }
+
+        let size = axWindow.get(Ax.sizeAttr)
+        guard let size = size else {
+          continue
+        }
+
+        if size.width < 100 || size.height < 100 {
+          continue
+        }
+
+        let windowTitle = axWindow.get(Ax.titleAttr) ?? ""
+        let isMinimized = axWindow.get(Ax.minimizedAttr) ?? false
+
+        if isMinimized {
+          continue
+        }
+
+        if windowTitle.localizedCaseInsensitiveContains(titleFilter) {
+          return axWindow
+        }
+      }
+    }
+    return nil
+  }
+
+  private func findWindowByPid(_ pidFilter: pid_t) -> AXUIElement? {
+    guard let app = NSRunningApplication(processIdentifier: pidFilter),
+          app.activationPolicy == .regular else {
+      return nil
+    }
+
+    let axApp = AXUIElementCreateApplication(pidFilter)
+
+    guard let axWindows = axApp.get(Ax.windowsAttr) else {
+      return nil
+    }
+
+    for axWindow in axWindows {
+      guard axWindow.containingWindowId() != nil else {
+        continue
+      }
+
+      let role = axWindow.get(Ax.roleAttr)
+      if let role = role, role != "AXWindow" {
+        continue
+      }
+
+      let subrole = axWindow.get(Ax.subroleAttr)
+      if let subrole = subrole {
+        let excludedSubroles = ["AXSystemDialog", "AXDialog", "AXUnknown"]
+        if excludedSubroles.contains(subrole) {
+          continue
+        }
+      }
+
+      let size = axWindow.get(Ax.sizeAttr)
+      guard let size = size else {
+        continue
+      }
+
+      if size.width < 100 || size.height < 100 {
+        continue
+      }
+
+      let windowTitle = axWindow.get(Ax.titleAttr) ?? ""
+      let isMinimized = axWindow.get(Ax.minimizedAttr) ?? false
+
+      if isMinimized {
+        continue
+      }
+
+      if windowTitle.isEmpty && !isMinimized {
+        continue
+      }
+
+      return axWindow
+    }
+    return nil
+  }
+
   private func getAttr(_ element: AXUIElement, _ attr: String) -> AnyObject? {
     var value: AnyObject?
     guard AXUIElementCopyAttributeValue(element, attr as CFString, &value) == .success else {
@@ -325,6 +473,17 @@ struct WalkerCommand: AsyncParsableCommand {
 
   private func getChildren(_ element: AXUIElement) -> [AXUIElement] {
     (getAttr(element, kAXChildrenAttribute) as? [AXUIElement]) ?? []
+  }
+
+  private func isDisabled(_ element: AXUIElement) -> Bool {
+    var value: CFTypeRef?
+    guard AXUIElementCopyAttributeValue(element, kAXEnabledAttribute as CFString, &value) == .success else {
+      return false
+    }
+    guard CFGetTypeID(value) == CFBooleanGetTypeID() else {
+      return false
+    }
+    return !CFBooleanGetValue(value as! CFBoolean)
   }
 
   private func getActions(_ element: AXUIElement) -> [String] {
