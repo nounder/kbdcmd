@@ -293,6 +293,27 @@ private final class NotificationWatcher {
   }
 
   private func handleNotification(element: AXUIElement, notification: String) {
+    // When a new window is created, traverse and register notifications on its elements
+    if notification == kAXWindowCreatedNotification {
+      var pid: pid_t = 0
+      AXUIElementGetPid(element, &pid)
+      if let entry = observers.first(where: { $0.pid == pid }) {
+        let refcon = Unmanaged.passUnretained(self).toOpaque()
+        var elementCount = 0
+        traverseAndRegister(
+          element: element,
+          observer: entry.observer,
+          refcon: refcon,
+          depth: 0,
+          elementCount: &elementCount
+        )
+        if verbose {
+          let appName = NSRunningApplication(processIdentifier: pid)?.localizedName ?? "Unknown"
+          output("[\(timestamp())] New window in \(appName) - registered \(elementCount) elements")
+        }
+      }
+    }
+
     // Get element info for context
     let role = getAttr(element, kAXRoleAttribute) ?? "Unknown"
     let title = getAttr(element, kAXTitleAttribute)
