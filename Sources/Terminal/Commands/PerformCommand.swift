@@ -23,32 +23,29 @@ struct PerformCommand: AsyncParsableCommand {
         kbdcmd perform move 100,200                       # Move cursor to coordinates (hover)
         kbdcmd perform AXPress 100,200                    # Trigger AXPress on element
         kbdcmd perform AXShowMenu 100,200                 # Show context menu
+        kbdcmd perform AXPress 100,200 --app Spotify      # AXPress in specific app's window
         kbdcmd perform type "Hello World"                 # Type text at current focus
         kbdcmd perform key return                         # Press Enter/Return key
         kbdcmd perform key tab                            # Press Tab key
-        kbdcmd perform click 100,200 --app Spotify        # Click in specific app
-        kbdcmd perform click 100,200 --title "My Doc"     # Click in window with title
-        kbdcmd perform click 100,200 --pid 12345          # Click in window by process ID
-        kbdcmd perform click 100,200 --cgid 67890         # Click in window by CGWindowID
       """
   )
 
   @Argument(help: "Operation: click, move, type, key, or an AX action (e.g., AXPress, AXShowMenu)")
   var operation: String
 
-  @Argument(help: "Argument for operation: coordinates (x,y or x,y,w,h), text for type, or key name")
+  @Argument(help: "Coordinates (x,y or bounds x,y,w,h), text for type, or key name")
   var operand: String?
 
-  @Option(name: .long, help: "Filter by application name or bundle ID")
+  @Option(name: .long, help: "Filter by app name or bundle ID (only for AX actions)")
   var app: String?
 
-  @Option(name: .long, help: "Filter by window title")
+  @Option(name: .long, help: "Filter by window title (only for AX actions)")
   var title: String?
 
-  @Option(name: .long, help: "Filter by process ID")
+  @Option(name: .long, help: "Filter by process ID (only for AX actions)")
   var pid: pid_t?
 
-  @Option(name: .long, help: "Target window by CGWindowID (use window-list to find)")
+  @Option(name: .long, help: "Filter by CGWindowID (only for AX actions)")
   var cgid: Int?
 
   @Flag(name: .long, help: "Print debug information")
@@ -58,53 +55,54 @@ struct PerformCommand: AsyncParsableCommand {
   func run() async throws {
     try Permissions.checkAccessibility()
 
-    // Validate arguments
-    let hasAction = action != nil
-    let hasType = type != nil
-    let hasClick = click
-    let hasKey = key != nil
-    let hasMove = move
-
-    let optionCount = [hasAction, hasType, hasClick, hasKey, hasMove].filter { $0 }.count
-    if optionCount == 0 {
-      throw ValidationError("Either --action, --type, --key, --click, or --move must be specified")
-    }
-    if optionCount > 1 {
-      throw ValidationError("--action, --type, --key, --click, and --move are mutually exclusive")
-    }
-
     // Validate filter exclusivity
     let filterCount = [app != nil, title != nil, pid != nil, cgid != nil].filter { $0 }.count
     if filterCount > 1 {
       throw ValidationError("--app, --title, --pid, and --cgid are mutually exclusive")
     }
 
-    if (hasAction || hasClick || hasMove) && coordinates == nil {
-      throw ValidationError("Coordinates are required for --action, --click, or --move")
-    }
+    let op = operation.lowercased()
 
-    if let typeText = type {
-      try performTyping(typeText)
+    // Handle type operation
+    if op == "type" {
+      guard let text = operand else {
+        throw ValidationError("Text argument required for type operation")
+      }
+      try performTyping(text)
       return
     }
 
-    if let keyName = key {
+    // Handle key operation
+    if op == "key" {
+      guard let keyName = operand else {
+        throw ValidationError("Key name required for key operation")
+      }
       try performKeyPress(keyName)
       return
     }
 
-    if click {
-      try performClick()
+    // Handle click operation
+    if op == "click" {
+      guard let coords = operand else {
+        throw ValidationError("Coordinates required for click operation")
+      }
+      try performClick(coords)
       return
     }
 
-    if move {
-      try performMove()
+    // Handle move operation
+    if op == "move" {
+      guard let coords = operand else {
+        throw ValidationError("Coordinates required for move operation")
+      }
+      try performMove(coords)
       return
     }
 
-    guard let actionName = action, let coords = coordinates else {
-      throw ValidationError("Action and coordinates are required")
+    // Assume it's an AX action (e.g., AXPress, AXShowMenu)
+    let actionName = operation  // Use original case for AX actions
+    guard let coords = operand else {
+      throw ValidationError("Coordinates required for \(actionName) action")
     }
 
     let point = try parseCoordinates(coords)
@@ -250,51 +248,18 @@ struct PerformCommand: AsyncParsableCommand {
     print("Pressed: \(keyName)")
   }
 
-  private func performClick() throws {
-    guard let coords = coordinates else {
-      throw ValidationError("Coordinates are required for --click")
-    }
-
+  private func performClick(_ coords: String) throws {
     let point = try parseCoordinates(coords)
     let x = point.x
     let y = point.y
 
-    // Raise and activate the target window before clicking
-    if let appFilter = app {
-      if let (window, runningApp) = findWindowAndAppByFilter(appFilter) {
-        AXUIElementPerformAction(window, kAXRaiseAction as CFString)
-        runningApp.activate()
-        usleep(50000)
-      }
-    } else if let titleFilter = title {
-      if let (window, runningApp) = findWindowAndAppByTitle(titleFilter) {
-        AXUIElementPerformAction(window, kAXRaiseAction as CFString)
-        runningApp.activate()
-        usleep(50000)
-      }
-    } else if let pidFilter = pid {
-      if let (window, runningApp) = findWindowAndAppByPid(pidFilter) {
-        AXUIElementPerformAction(window, kAXRaiseAction as CFString)
-        runningApp.activate()
-        usleep(50000)
-      }
-    } else if let cgidFilter = cgid {
-      if let (window, runningApp) = findWindowAndAppByCGID(CGWindowID(cgidFilter)) {
-        AXUIElementPerformAction(window, kAXRaiseAction as CFString)
-        runningApp.activate()
-        usleep(50000)
-      }
-    } else {
-      // Auto-detect window at coordinates and raise it
-      if let (window, runningApp) = findWindowAtPoint(point) {
-        AXUIElementPerformAction(window, kAXRaiseAction as CFString)
-        runningApp.activate()
-        usleep(50000)
-      }
+    // Raise and activate the window at coordinates
+    if let (window, runningApp) = findWindowAtPoint(point) {
+      AXUIElementPerformAction(window, kAXRaiseAction as CFString)
+      runningApp.activate()
+      usleep(50000)
     }
 
-    // CGEvent uses screen coordinates directly (same as AX coordinates)
-    // No conversion needed between AX and CG coordinate systems on modern macOS
     guard let source = CGEventSource(stateID: .hidSystemState) else {
       throw ValidationError("Failed to create event source")
     }
@@ -325,47 +290,16 @@ struct PerformCommand: AsyncParsableCommand {
     print("Clicked at (\(Int(x)),\(Int(y)))")
   }
 
-  private func performMove() throws {
-    guard let coords = coordinates else {
-      throw ValidationError("Coordinates are required for --move")
-    }
-
+  private func performMove(_ coords: String) throws {
     let point = try parseCoordinates(coords)
     let x = point.x
     let y = point.y
 
-    // Raise and activate the target window before moving
-    if let appFilter = app {
-      if let (window, runningApp) = findWindowAndAppByFilter(appFilter) {
-        AXUIElementPerformAction(window, kAXRaiseAction as CFString)
-        runningApp.activate()
-        usleep(100000)
-      }
-    } else if let titleFilter = title {
-      if let (window, runningApp) = findWindowAndAppByTitle(titleFilter) {
-        AXUIElementPerformAction(window, kAXRaiseAction as CFString)
-        runningApp.activate()
-        usleep(100000)
-      }
-    } else if let pidFilter = pid {
-      if let (window, runningApp) = findWindowAndAppByPid(pidFilter) {
-        AXUIElementPerformAction(window, kAXRaiseAction as CFString)
-        runningApp.activate()
-        usleep(100000)
-      }
-    } else if let cgidFilter = cgid {
-      if let (window, runningApp) = findWindowAndAppByCGID(CGWindowID(cgidFilter)) {
-        AXUIElementPerformAction(window, kAXRaiseAction as CFString)
-        runningApp.activate()
-        usleep(100000)
-      }
-    } else {
-      // Auto-detect window at coordinates and raise it
-      if let (window, runningApp) = findWindowAtPoint(point) {
-        AXUIElementPerformAction(window, kAXRaiseAction as CFString)
-        runningApp.activate()
-        usleep(100000)
-      }
+    // Raise and activate the window at coordinates
+    if let (window, runningApp) = findWindowAtPoint(point) {
+      AXUIElementPerformAction(window, kAXRaiseAction as CFString)
+      runningApp.activate()
+      usleep(100000)
     }
 
     // Use CGWarpMouseCursorPosition for reliable cursor movement
