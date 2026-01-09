@@ -21,6 +21,7 @@ struct Kbdcmd: AsyncParsableCommand {
       ShortcutCommand.self,
       WindowListCommand.self,
       PerformCommand.self,
+      HelpWorkflowsCommand.self,
     ]
   )
 }
