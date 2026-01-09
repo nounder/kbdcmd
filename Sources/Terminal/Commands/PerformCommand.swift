@@ -18,27 +18,26 @@ struct PerformCommand: AsyncParsableCommand {
       types text at the current focus, presses a special key, or performs a mouse click.
 
       Examples:
-        kbdcmd perform --action AXPress 100,200           # Trigger AXPress on element at (100,200)
-        kbdcmd perform --action AXShowMenu 100,200        # Show context menu
-        kbdcmd perform --type "Hello World"               # Type text at current focus
-        kbdcmd perform --key return                       # Press Enter/Return key
-        kbdcmd perform --key tab                          # Press Tab key
-        kbdcmd perform --click 100,200                    # Mouse click at coordinates
-        kbdcmd perform --action AXPress 100,200 --app Spotify  # Action in specific app
-        kbdcmd perform --click 100,200 --title "My Document"   # Click in window with title
-        kbdcmd perform --click 100,200 --pid 12345             # Click in window by process ID
-        kbdcmd perform --click 100,200 --cgid 67890            # Click in window by CGWindowID
+        kbdcmd perform click 100,200                      # Mouse click at coordinates
+        kbdcmd perform click 100,200,50,30                # Click center of bounds (125,215)
+        kbdcmd perform move 100,200                       # Move cursor to coordinates (hover)
+        kbdcmd perform AXPress 100,200                    # Trigger AXPress on element
+        kbdcmd perform AXShowMenu 100,200                 # Show context menu
+        kbdcmd perform type "Hello World"                 # Type text at current focus
+        kbdcmd perform key return                         # Press Enter/Return key
+        kbdcmd perform key tab                            # Press Tab key
+        kbdcmd perform click 100,200 --app Spotify        # Click in specific app
+        kbdcmd perform click 100,200 --title "My Doc"     # Click in window with title
+        kbdcmd perform click 100,200 --pid 12345          # Click in window by process ID
+        kbdcmd perform click 100,200 --cgid 67890         # Click in window by CGWindowID
       """
   )
 
-  @Option(name: .long, help: "Action name to perform (e.g., AXPress, AXShowMenu)")
-  var action: String?
+  @Argument(help: "Operation: click, move, type, key, or an AX action (e.g., AXPress, AXShowMenu)")
+  var operation: String
 
-  @Option(name: .long, help: "Text to type at current focus")
-  var type: String?
-
-  @Option(name: .long, help: "Special key to press (e.g., return, tab, escape, space, delete, up, down, left, right)")
-  var key: String?
+  @Argument(help: "Argument for operation: coordinates (x,y or x,y,w,h), text for type, or key name")
+  var operand: String?
 
   @Option(name: .long, help: "Filter by application name or bundle ID")
   var app: String?
@@ -51,15 +50,6 @@ struct PerformCommand: AsyncParsableCommand {
 
   @Option(name: .long, help: "Target window by CGWindowID (use window-list to find)")
   var cgid: Int?
-
-  @Flag(name: .long, help: "Perform a mouse click at coordinates")
-  var click: Bool = false
-
-  @Flag(name: .long, help: "Move cursor to coordinates (hover)")
-  var move: Bool = false
-
-  @Argument(help: "Coordinates as x,y (required for --action or --click)")
-  var coordinates: String?
 
   @Flag(name: .long, help: "Print debug information")
   var debug: Bool = false
@@ -117,15 +107,9 @@ struct PerformCommand: AsyncParsableCommand {
       throw ValidationError("Action and coordinates are required")
     }
 
-    // Parse coordinates
-    let parts = coords.split(separator: ",")
-    guard parts.count == 2,
-          let x = Double(parts[0].trimmingCharacters(in: .whitespaces)),
-          let y = Double(parts[1].trimmingCharacters(in: .whitespaces)) else {
-      throw ValidationError("Coordinates must be in format: x,y (e.g., 100,200)")
-    }
-
-    let point = CGPoint(x: x, y: y)
+    let point = try parseCoordinates(coords)
+    let x = point.x
+    let y = point.y
 
     // Get the target window
     let root: AXUIElement
@@ -271,15 +255,9 @@ struct PerformCommand: AsyncParsableCommand {
       throw ValidationError("Coordinates are required for --click")
     }
 
-    // Parse coordinates
-    let parts = coords.split(separator: ",")
-    guard parts.count == 2,
-          let x = Double(parts[0].trimmingCharacters(in: .whitespaces)),
-          let y = Double(parts[1].trimmingCharacters(in: .whitespaces)) else {
-      throw ValidationError("Coordinates must be in format: x,y (e.g., 100,200)")
-    }
-
-    let point = CGPoint(x: x, y: y)
+    let point = try parseCoordinates(coords)
+    let x = point.x
+    let y = point.y
 
     // Raise and activate the target window before clicking
     if let appFilter = app {
@@ -352,15 +330,9 @@ struct PerformCommand: AsyncParsableCommand {
       throw ValidationError("Coordinates are required for --move")
     }
 
-    // Parse coordinates
-    let parts = coords.split(separator: ",")
-    guard parts.count == 2,
-          let x = Double(parts[0].trimmingCharacters(in: .whitespaces)),
-          let y = Double(parts[1].trimmingCharacters(in: .whitespaces)) else {
-      throw ValidationError("Coordinates must be in format: x,y (e.g., 100,200)")
-    }
-
-    let point = CGPoint(x: x, y: y)
+    let point = try parseCoordinates(coords)
+    let x = point.x
+    let y = point.y
 
     // Raise and activate the target window before moving
     if let appFilter = app {
@@ -407,6 +379,32 @@ struct PerformCommand: AsyncParsableCommand {
     }
 
     print("Moved to (\(Int(x)),\(Int(y)))")
+  }
+
+  private func parseCoordinates(_ coords: String) throws -> CGPoint {
+    let parts = coords.split(separator: ",")
+
+    if parts.count == 2 {
+      // Simple x,y format
+      guard let x = Double(parts[0].trimmingCharacters(in: .whitespaces)),
+            let y = Double(parts[1].trimmingCharacters(in: .whitespaces)) else {
+        throw ValidationError("Coordinates must be in format: x,y (e.g., 100,200)")
+      }
+      return CGPoint(x: x, y: y)
+    } else if parts.count == 4 {
+      // Bounds format: x,y,width,height - calculate center
+      guard let x = Double(parts[0].trimmingCharacters(in: .whitespaces)),
+            let y = Double(parts[1].trimmingCharacters(in: .whitespaces)),
+            let width = Double(parts[2].trimmingCharacters(in: .whitespaces)),
+            let height = Double(parts[3].trimmingCharacters(in: .whitespaces)) else {
+        throw ValidationError("Bounds must be in format: x,y,width,height (e.g., 100,200,50,30)")
+      }
+      let centerX = x + width / 2
+      let centerY = y + height / 2
+      return CGPoint(x: centerX, y: centerY)
+    } else {
+      throw ValidationError("Coordinates must be x,y or bounds x,y,width,height")
+    }
   }
 
   private func keyCodeForCharacter(_ char: String) -> (CGKeyCode?, Bool) {

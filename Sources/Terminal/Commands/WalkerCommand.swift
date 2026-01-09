@@ -8,6 +8,81 @@ import Foundation
 @discardableResult
 func _AXUIElementGetWindow(_ axUiElement: AXUIElement, _ id: inout CGWindowID) -> AXError
 
+private final class AXRegistry {
+  private var actionsCache: [ObjectIdentifier: [String]] = [:]
+  private var boundsCache: [ObjectIdentifier: CGRect?] = [:]
+  private var childrenCache: [ObjectIdentifier: [AXUIElement]] = [:]
+  private var attrCache: [ObjectIdentifier: [String: AnyObject?]] = [:]
+
+  func getActions(_ element: AXUIElement) -> [String] {
+    let key = ObjectIdentifier(element)
+    if let cached = actionsCache[key] {
+      return cached
+    }
+    var names: CFArray?
+    guard AXUIElementCopyActionNames(element, &names) == .success,
+          let actionNames = names as? [String] else {
+      actionsCache[key] = []
+      return []
+    }
+    let result = actionNames
+      .compactMap { $0.split(whereSeparator: { $0.isWhitespace }).first.map(String.init) }
+      .filter { $0.hasPrefix("AX") }
+    actionsCache[key] = result
+    return result
+  }
+
+  func getBounds(_ element: AXUIElement) -> CGRect? {
+    let key = ObjectIdentifier(element)
+    if let cached = boundsCache[key] {
+      return cached
+    }
+    let result = computeBounds(element)
+    boundsCache[key] = result
+    return result
+  }
+
+  private func computeBounds(_ element: AXUIElement) -> CGRect? {
+    guard let pos = getAttr(element, kAXPositionAttribute),
+          let size = getAttr(element, kAXSizeAttribute),
+          CFGetTypeID(pos as CFTypeRef) == AXValueGetTypeID(),
+          CFGetTypeID(size as CFTypeRef) == AXValueGetTypeID() else {
+      return nil
+    }
+    var point = CGPoint.zero
+    var sz = CGSize.zero
+    guard AXValueGetValue(pos as! AXValue, .cgPoint, &point),
+          AXValueGetValue(size as! AXValue, .cgSize, &sz) else {
+      return nil
+    }
+    return CGRect(origin: point, size: sz)
+  }
+
+  func getChildren(_ element: AXUIElement) -> [AXUIElement] {
+    let key = ObjectIdentifier(element)
+    if let cached = childrenCache[key] {
+      return cached
+    }
+    let result = (getAttr(element, kAXChildrenAttribute) as? [AXUIElement]) ?? []
+    childrenCache[key] = result
+    return result
+  }
+
+  func getAttr(_ element: AXUIElement, _ attr: String) -> AnyObject? {
+    let key = ObjectIdentifier(element)
+    if let elementCache = attrCache[key], elementCache.keys.contains(attr) {
+      return elementCache[attr] ?? nil
+    }
+    var value: AnyObject?
+    let success = AXUIElementCopyAttributeValue(element, attr as CFString, &value) == .success
+    if attrCache[key] == nil {
+      attrCache[key] = [:]
+    }
+    attrCache[key]![attr] = success ? value : nil
+    return success ? value : nil
+  }
+}
+
 struct WalkerCommand: AsyncParsableCommand {
   static let configuration = CommandConfiguration(
     commandName: "walker",
@@ -145,6 +220,8 @@ struct WalkerCommand: AsyncParsableCommand {
       root = window as! AXUIElement
     }
 
+    let registry = AXRegistry()
+
     var openTags: [(role: String, depth: Int)] = []
     var stack: [(element: AXUIElement, depth: Int, parentId: String?, siblingIndex: Int)] = [
       (root, 0, nil, 0)
@@ -161,9 +238,9 @@ struct WalkerCommand: AsyncParsableCommand {
       }
 
       let nodeId = parentId.map { "\($0)-\(siblingIndex)" } ?? "#0"
-      let rawRole = getAttr(element, kAXRoleAttribute) as? String ?? "Unknown"
-      let title = (getAttr(element, kAXTitleAttribute) as? String).map { escapeAttribute($0) }
-      let children = getChildren(element)
+      let rawRole = registry.getAttr(element, kAXRoleAttribute) as? String ?? "Unknown"
+      let title = (registry.getAttr(element, kAXTitleAttribute) as? String).map { escapeAttribute($0) }
+      let children = registry.getChildren(element)
       let hasChildren = !children.isEmpty && (maxDepth == nil || depth < maxDepth!)
 
       // Skip empty groups and zero-size elements (unless they have actions)
@@ -171,8 +248,8 @@ struct WalkerCommand: AsyncParsableCommand {
         if rawRole == "AXGroup" && children.isEmpty {
           continue
         }
-        if let b = getBounds(element), b.width == 0 || b.height == 0 {
-          if getActions(element).isEmpty {
+        if let b = registry.getBounds(element), b.width == 0 || b.height == 0 {
+          if registry.getActions(element).isEmpty {
             continue
           }
         }
@@ -185,7 +262,7 @@ struct WalkerCommand: AsyncParsableCommand {
 
       // Skip elements smaller than 5px
       if visual {
-        if let b = getBounds(element) {
+        if let b = registry.getBounds(element) {
           if b.width <= 5 || b.height <= 5 {
             continue
           }
@@ -194,10 +271,10 @@ struct WalkerCommand: AsyncParsableCommand {
         }
       }
 
-      let value = (getAttr(element, kAXValueAttribute) as? String).map { escapeAttribute($0) }
-      let description = (getAttr(element, kAXDescriptionAttribute) as? String).map { escapeAttribute($0) }
-      let rawRoleDescription = getAttr(element, kAXRoleDescriptionAttribute) as? String
-      let label = (getAttr(element, "AXLabel") as? String).map { escapeAttribute($0) }
+      let value = (registry.getAttr(element, kAXValueAttribute) as? String).map { escapeAttribute($0) }
+      let description = (registry.getAttr(element, kAXDescriptionAttribute) as? String).map { escapeAttribute($0) }
+      let rawRoleDescription = registry.getAttr(element, kAXRoleDescriptionAttribute) as? String
+      let label = (registry.getAttr(element, "AXLabel") as? String).map { escapeAttribute($0) }
 
       let role: String
       let showRoleDescription: Bool
@@ -222,7 +299,7 @@ struct WalkerCommand: AsyncParsableCommand {
       if id {
         attrs += "id=\"\(escapeAttribute(nodeId))\""
       }
-      if bounds, let b = getBounds(element) {
+      if bounds, let b = registry.getBounds(element) {
         if !attrs.isEmpty { attrs += " " }
         attrs += "bounds=\"\(Int(b.origin.x)),\(Int(b.origin.y)),\(Int(b.width)),\(Int(b.height))\""
       }
@@ -248,7 +325,7 @@ struct WalkerCommand: AsyncParsableCommand {
         attrs += "label=\"\(truncate(label))\""
       }
       if let actionMatcher = actionMatcher {
-        let actionNames = getActions(element).filter(actionMatcher)
+        let actionNames = registry.getActions(element).filter(actionMatcher)
         for actionName in actionNames {
           if !attrs.isEmpty { attrs += " " }
           if actionDesc, let desc = getActionDescription(element, actionName), !desc.isEmpty {
@@ -261,7 +338,7 @@ struct WalkerCommand: AsyncParsableCommand {
 
       // Handle AXStaticText as text node when --text is set
       if inlineText && rawRole == "AXStaticText" {
-        let textContent = (getAttr(element, kAXValueAttribute) as? String) ?? (getAttr(element, kAXTitleAttribute) as? String) ?? ""
+        let textContent = (registry.getAttr(element, kAXValueAttribute) as? String) ?? (registry.getAttr(element, kAXTitleAttribute) as? String) ?? ""
         if !textContent.isEmpty {
           print("\(indent)\(escapeAttribute(textContent))")
         }
@@ -484,33 +561,6 @@ struct WalkerCommand: AsyncParsableCommand {
     return nil
   }
 
-  private func getAttr(_ element: AXUIElement, _ attr: String) -> AnyObject? {
-    var value: AnyObject?
-    guard AXUIElementCopyAttributeValue(element, attr as CFString, &value) == .success else {
-      return nil
-    }
-    return value
-  }
-
-  private func getChildren(_ element: AXUIElement) -> [AXUIElement] {
-    (getAttr(element, kAXChildrenAttribute) as? [AXUIElement]) ?? []
-  }
-
-  private func getActions(_ element: AXUIElement) -> [String] {
-    var names: CFArray?
-    guard AXUIElementCopyActionNames(element, &names) == .success,
-          let actionNames = names as? [String] else {
-      return []
-    }
-    // Some apps (e.g. Apple TV) return malformed action names like:
-    // "AXPress Name:More Target:0x0 Selector:(null)"
-    // or separate entries like "Name:More\nTarget:0x0\nSelector:(null)"
-    // Filter to only valid AX action names
-    return actionNames
-      .compactMap { $0.split(whereSeparator: { $0.isWhitespace }).first.map(String.init) }
-      .filter { $0.hasPrefix("AX") }
-  }
-
   private func getActionDescription(_ element: AXUIElement, _ action: String) -> String? {
     var desc: CFString?
     guard AXUIElementCopyActionDescription(element, action as CFString, &desc) == .success,
@@ -518,22 +568,6 @@ struct WalkerCommand: AsyncParsableCommand {
       return nil
     }
     return description
-  }
-
-  private func getBounds(_ element: AXUIElement) -> CGRect? {
-    guard let pos = getAttr(element, kAXPositionAttribute),
-          let size = getAttr(element, kAXSizeAttribute),
-          CFGetTypeID(pos as CFTypeRef) == AXValueGetTypeID(),
-          CFGetTypeID(size as CFTypeRef) == AXValueGetTypeID() else {
-      return nil
-    }
-    var point = CGPoint.zero
-    var sz = CGSize.zero
-    guard AXValueGetValue(pos as! AXValue, .cgPoint, &point),
-          AXValueGetValue(size as! AXValue, .cgSize, &sz) else {
-      return nil
-    }
-    return CGRect(origin: point, size: sz)
   }
 
   /// Escapes a string for use in HTML5-like output.
