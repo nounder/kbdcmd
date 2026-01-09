@@ -25,6 +25,9 @@ struct PerformCommand: AsyncParsableCommand {
         kbdcmd perform --key tab                          # Press Tab key
         kbdcmd perform --click 100,200                    # Mouse click at coordinates
         kbdcmd perform --action AXPress 100,200 --app Spotify  # Action in specific app
+        kbdcmd perform --click 100,200 --title "My Document"   # Click in window with title
+        kbdcmd perform --click 100,200 --pid 12345             # Click in window by process ID
+        kbdcmd perform --click 100,200 --cgid 67890            # Click in window by CGWindowID
       """
   )
 
@@ -39,6 +42,15 @@ struct PerformCommand: AsyncParsableCommand {
 
   @Option(name: .long, help: "Filter by application name or bundle ID")
   var app: String?
+
+  @Option(name: .long, help: "Filter by window title")
+  var title: String?
+
+  @Option(name: .long, help: "Filter by process ID")
+  var pid: pid_t?
+
+  @Option(name: .long, help: "Target window by CGWindowID (use window-list to find)")
+  var cgid: Int?
 
   @Flag(name: .long, help: "Perform a mouse click at coordinates")
   var click: Bool = false
@@ -69,6 +81,12 @@ struct PerformCommand: AsyncParsableCommand {
     }
     if optionCount > 1 {
       throw ValidationError("--action, --type, --key, --click, and --move are mutually exclusive")
+    }
+
+    // Validate filter exclusivity
+    let filterCount = [app != nil, title != nil, pid != nil, cgid != nil].filter { $0 }.count
+    if filterCount > 1 {
+      throw ValidationError("--app, --title, --pid, and --cgid are mutually exclusive")
     }
 
     if (hasAction || hasClick || hasMove) && coordinates == nil {
@@ -114,6 +132,21 @@ struct PerformCommand: AsyncParsableCommand {
     if let appFilter = app {
       guard let window = findWindowByApp(appFilter) else {
         throw ValidationError("No window found for app '\(appFilter)'")
+      }
+      root = window
+    } else if let titleFilter = title {
+      guard let window = findWindowByTitle(titleFilter) else {
+        throw ValidationError("No window found with title '\(titleFilter)'")
+      }
+      root = window
+    } else if let pidFilter = pid {
+      guard let window = findWindowByPid(pidFilter) else {
+        throw ValidationError("No window found for pid \(pidFilter)")
+      }
+      root = window
+    } else if let cgidFilter = cgid {
+      guard let window = findWindowByCGID(CGWindowID(cgidFilter)) else {
+        throw ValidationError("No window found with cgid \(cgidFilter)")
       }
       root = window
     } else {
@@ -250,8 +283,25 @@ struct PerformCommand: AsyncParsableCommand {
 
     // Raise and activate the target window before clicking
     if let appFilter = app {
-      // Use explicit app filter if provided
       if let (window, runningApp) = findWindowAndAppByFilter(appFilter) {
+        AXUIElementPerformAction(window, kAXRaiseAction as CFString)
+        runningApp.activate()
+        usleep(50000)
+      }
+    } else if let titleFilter = title {
+      if let (window, runningApp) = findWindowAndAppByTitle(titleFilter) {
+        AXUIElementPerformAction(window, kAXRaiseAction as CFString)
+        runningApp.activate()
+        usleep(50000)
+      }
+    } else if let pidFilter = pid {
+      if let (window, runningApp) = findWindowAndAppByPid(pidFilter) {
+        AXUIElementPerformAction(window, kAXRaiseAction as CFString)
+        runningApp.activate()
+        usleep(50000)
+      }
+    } else if let cgidFilter = cgid {
+      if let (window, runningApp) = findWindowAndAppByCGID(CGWindowID(cgidFilter)) {
         AXUIElementPerformAction(window, kAXRaiseAction as CFString)
         runningApp.activate()
         usleep(50000)
@@ -314,8 +364,25 @@ struct PerformCommand: AsyncParsableCommand {
 
     // Raise and activate the target window before moving
     if let appFilter = app {
-      // Use explicit app filter if provided
       if let (window, runningApp) = findWindowAndAppByFilter(appFilter) {
+        AXUIElementPerformAction(window, kAXRaiseAction as CFString)
+        runningApp.activate()
+        usleep(100000)
+      }
+    } else if let titleFilter = title {
+      if let (window, runningApp) = findWindowAndAppByTitle(titleFilter) {
+        AXUIElementPerformAction(window, kAXRaiseAction as CFString)
+        runningApp.activate()
+        usleep(100000)
+      }
+    } else if let pidFilter = pid {
+      if let (window, runningApp) = findWindowAndAppByPid(pidFilter) {
+        AXUIElementPerformAction(window, kAXRaiseAction as CFString)
+        runningApp.activate()
+        usleep(100000)
+      }
+    } else if let cgidFilter = cgid {
+      if let (window, runningApp) = findWindowAndAppByCGID(CGWindowID(cgidFilter)) {
         AXUIElementPerformAction(window, kAXRaiseAction as CFString)
         runningApp.activate()
         usleep(100000)
@@ -431,6 +498,18 @@ struct PerformCommand: AsyncParsableCommand {
     return findWindowAndAppByFilter(appFilter)?.0
   }
 
+  private func findWindowByTitle(_ titleFilter: String) -> AXUIElement? {
+    return findWindowAndAppByTitle(titleFilter)?.0
+  }
+
+  private func findWindowByPid(_ pidFilter: pid_t) -> AXUIElement? {
+    return findWindowAndAppByPid(pidFilter)?.0
+  }
+
+  private func findWindowByCGID(_ targetCGID: CGWindowID) -> AXUIElement? {
+    return findWindowAndAppByCGID(targetCGID)?.0
+  }
+
   private func findWindowAndAppByFilter(_ appFilter: String) -> (AXUIElement, NSRunningApplication)? {
     let runningApps = NSWorkspace.shared.runningApplications
 
@@ -493,6 +572,138 @@ struct PerformCommand: AsyncParsableCommand {
         }
 
         return (axWindow, app)
+      }
+    }
+    return nil
+  }
+
+  private func findWindowAndAppByTitle(_ titleFilter: String) -> (AXUIElement, NSRunningApplication)? {
+    let runningApps = NSWorkspace.shared.runningApplications
+
+    for app in runningApps {
+      guard app.activationPolicy == .regular else {
+        continue
+      }
+
+      let axApp = AXUIElementCreateApplication(app.processIdentifier)
+
+      guard let axWindows = axApp.get(Ax.windowsAttr) else {
+        continue
+      }
+
+      for axWindow in axWindows {
+        guard axWindow.containingWindowId() != nil else {
+          continue
+        }
+
+        let role = axWindow.get(Ax.roleAttr)
+        if let role = role, role != "AXWindow" {
+          continue
+        }
+
+        let subrole = axWindow.get(Ax.subroleAttr)
+        if let subrole = subrole {
+          let excludedSubroles = ["AXSystemDialog", "AXDialog", "AXUnknown"]
+          if excludedSubroles.contains(subrole) {
+            continue
+          }
+        }
+
+        let size = axWindow.get(Ax.sizeAttr)
+        guard let size = size else {
+          continue
+        }
+
+        if size.width < 100 || size.height < 100 {
+          continue
+        }
+
+        let windowTitle = axWindow.get(Ax.titleAttr) ?? ""
+        let isMinimized = axWindow.get(Ax.minimizedAttr) ?? false
+
+        if isMinimized {
+          continue
+        }
+
+        if windowTitle.localizedCaseInsensitiveContains(titleFilter) {
+          return (axWindow, app)
+        }
+      }
+    }
+    return nil
+  }
+
+  private func findWindowAndAppByPid(_ pidFilter: pid_t) -> (AXUIElement, NSRunningApplication)? {
+    guard let app = NSRunningApplication(processIdentifier: pidFilter),
+          app.activationPolicy == .regular else {
+      return nil
+    }
+
+    let axApp = AXUIElementCreateApplication(pidFilter)
+
+    guard let axWindows = axApp.get(Ax.windowsAttr) else {
+      return nil
+    }
+
+    for axWindow in axWindows {
+      guard axWindow.containingWindowId() != nil else {
+        continue
+      }
+
+      let role = axWindow.get(Ax.roleAttr)
+      if let role = role, role != "AXWindow" {
+        continue
+      }
+
+      let subrole = axWindow.get(Ax.subroleAttr)
+      if let subrole = subrole {
+        let excludedSubroles = ["AXSystemDialog", "AXDialog", "AXUnknown"]
+        if excludedSubroles.contains(subrole) {
+          continue
+        }
+      }
+
+      let size = axWindow.get(Ax.sizeAttr)
+      guard let size = size else {
+        continue
+      }
+
+      if size.width < 100 || size.height < 100 {
+        continue
+      }
+
+      let windowTitle = axWindow.get(Ax.titleAttr) ?? ""
+      let isMinimized = axWindow.get(Ax.minimizedAttr) ?? false
+
+      if isMinimized {
+        continue
+      }
+
+      if windowTitle.isEmpty && !isMinimized {
+        continue
+      }
+
+      return (axWindow, app)
+    }
+    return nil
+  }
+
+  private func findWindowAndAppByCGID(_ targetCGID: CGWindowID) -> (AXUIElement, NSRunningApplication)? {
+    for app in NSWorkspace.shared.runningApplications {
+      guard app.activationPolicy == .regular else { continue }
+
+      let axApp = AXUIElementCreateApplication(app.processIdentifier)
+      var windowsRef: AnyObject?
+      guard AXUIElementCopyAttributeValue(axApp, kAXWindowsAttribute as CFString, &windowsRef) == .success,
+            let windows = windowsRef as? [AXUIElement] else {
+        continue
+      }
+
+      for window in windows {
+        var cgWindowId = CGWindowID()
+        if _AXUIElementGetWindow_Perform(window, &cgWindowId) == .success && cgWindowId == targetCGID {
+          return (window, app)
+        }
       }
     }
     return nil
