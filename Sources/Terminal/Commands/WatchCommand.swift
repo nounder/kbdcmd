@@ -28,6 +28,8 @@ struct WatchCommand: AsyncParsableCommand {
         kbdcmd watch --query 'app=Music'              # Filter by app
         kbdcmd watch -q 'app=Music' -q 'role!=AXStaticText'  # Multiple filters (AND)
         kbdcmd watch --query 'type~AXValue*'          # Pattern matching
+        kbdcmd watch --timeout 10                     # Stop after 10 seconds
+        kbdcmd watch --until 'type=AXWindowCreated'   # Stop when window created
       """
   )
 
@@ -40,28 +42,44 @@ struct WatchCommand: AsyncParsableCommand {
   @Option(name: .shortAndLong, help: "Filter output with logfmt-style queries (e.g., app=Music role!=AXStaticText)")
   var query: [String] = []
 
+  @Option(name: .long, help: "Stop after specified number of seconds")
+  var timeout: Int?
+
+  @Option(name: .long, help: "Stop when an event matches this query (e.g., type=AXValueChanged)")
+  var until: [String] = []
+
   @MainActor
   func run() async throws {
     try Permissions.checkAccessibility()
 
     let queryFilter = try query.isEmpty ? nil : QueryFilter(conditions: query)
+    let untilFilter = try until.isEmpty ? nil : QueryFilter(conditions: until)
 
     let watcher = NotificationWatcher(
       maxDepth: depth,
       verbose: verbose,
-      queryFilter: queryFilter
+      queryFilter: queryFilter,
+      untilFilter: untilFilter
     )
 
     watcher.start()
 
-    // Run indefinitely
+    // Calculate deadline if timeout specified
+    let deadline: Date? = timeout.map { Date().addingTimeInterval(TimeInterval($0)) }
+
+    // Run until cancelled, timeout, or until condition met
     try await withTaskCancellationHandler {
-      while !Task.isCancelled {
-        try await Task.sleep(for: .seconds(1))
+      while !Task.isCancelled && !watcher.shouldStop {
+        if let deadline = deadline, Date() >= deadline {
+          break
+        }
+        try await Task.sleep(for: .milliseconds(100))
       }
     } onCancel: {
       watcher.stop()
     }
+
+    watcher.stop()
   }
 }
 
@@ -71,6 +89,8 @@ private final class NotificationWatcher {
   private let maxDepth: Int
   private let verbose: Bool
   private let queryFilter: QueryFilter?
+  private let untilFilter: QueryFilter?
+  private(set) var shouldStop: Bool = false
 
   private static let allNotifications: [String] = [
     // Application notifications
@@ -120,10 +140,11 @@ private final class NotificationWatcher {
     kAXHelpTagCreatedNotification,
   ]
 
-  init(maxDepth: Int, verbose: Bool, queryFilter: QueryFilter? = nil) {
+  init(maxDepth: Int, verbose: Bool, queryFilter: QueryFilter? = nil, untilFilter: QueryFilter? = nil) {
     self.maxDepth = maxDepth
     self.verbose = verbose
     self.queryFilter = queryFilter
+    self.untilFilter = untilFilter
   }
 
   func start() {
@@ -182,6 +203,14 @@ private final class NotificationWatcher {
 
     let pid = app.processIdentifier
     let appName = app.localizedName ?? "Unknown"
+
+    // Check if app matches query filter (if filtering by app)
+    if let filter = queryFilter {
+      let testLine = "app=\"\(escapeQuoted(appName))\""
+      if !filter.matchesAppFilter(line: testLine) {
+        return
+      }
+    }
 
     // Check if we already have an observer for this pid
     if observers.contains(where: { $0.pid == pid }) {
@@ -355,6 +384,11 @@ private final class NotificationWatcher {
     }
 
     self.output(output)
+
+    // Check if we should stop (after outputting the matching event)
+    if let untilFilter = untilFilter, untilFilter.matches(line: output) {
+      shouldStop = true
+    }
   }
 
   private func getAttr(_ element: AXUIElement, _ attr: String) -> String? {
@@ -511,5 +545,14 @@ private struct QueryFilter {
 
   func matches(line: String) -> Bool {
     conditions.allSatisfy { $0.matches(in: line) }
+  }
+
+  /// Check if the line matches app-related conditions only.
+  /// Used to filter apps before adding observers.
+  func matchesAppFilter(line: String) -> Bool {
+    let appConditions = conditions.filter { $0.field == "app" }
+    // If no app conditions, all apps match
+    guard !appConditions.isEmpty else { return true }
+    return appConditions.allSatisfy { $0.matches(in: line) }
   }
 }
