@@ -305,24 +305,24 @@ private final class NotificationWatcher {
     // Extract notification type (e.g., "kAXValueChangedNotification" -> "AXValueChanged")
     let notificationType = extractNotificationType(notification)
 
-    // Build structured output
-    var output = "time=\(timestamp()) type=\(escapeUnquoted(notificationType)) app=\(escapeUnquoted(appName)) role=\(escapeUnquoted(role))"
+    // Build structured output with quoted values
+    var output = "time=\"\(timestamp())\" type=\"\(escapeQuoted(notificationType))\" app=\"\(escapeQuoted(appName))\" role=\"\(escapeQuoted(role))\""
 
     if verbose {
       if let title = title, !title.isEmpty {
-        output += " title=\"\(escapeAttribute(truncate(title)))\""
+        output += " title=\"\(escapeQuoted(truncate(title)))\""
       }
       if let description = description, !description.isEmpty {
-        output += " desc=\"\(escapeAttribute(truncate(description)))\""
+        output += " desc=\"\(escapeQuoted(truncate(description)))\""
       }
       if let value = value, !value.isEmpty {
-        output += " value=\"\(escapeAttribute(truncate(value)))\""
+        output += " value=\"\(escapeQuoted(truncate(value)))\""
       }
     } else {
       // Show the most useful identifier
       let identifier = title ?? description ?? value
       if let id = identifier, !id.isEmpty {
-        output += " text=\"\(escapeAttribute(truncate(id)))\""
+        output += " text=\"\(escapeQuoted(truncate(id)))\""
       }
     }
 
@@ -350,16 +350,8 @@ private final class NotificationWatcher {
     return result
   }
 
-  private func escapeUnquoted(_ string: String) -> String {
-    // Escape spaces, equals, and backslashes for unquoted values
-    return string
-      .replacingOccurrences(of: "\\", with: "\\\\")
-      .replacingOccurrences(of: "=", with: "\\=")
-      .replacingOccurrences(of: " ", with: "\\ ")
-  }
-
-  private func escapeAttribute(_ string: String) -> String {
-    // Escape quotes and backslashes for attribute values
+  private func escapeQuoted(_ string: String) -> String {
+    // Escape backslashes and quotes for quoted values
     return string
       .replacingOccurrences(of: "\\", with: "\\\\")
       .replacingOccurrences(of: "\"", with: "\\\"")
