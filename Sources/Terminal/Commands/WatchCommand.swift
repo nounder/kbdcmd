@@ -351,9 +351,10 @@ private final class NotificationWatcher {
   }
 
   private func escapeUnquoted(_ string: String) -> String {
-    // Escape spaces and backslashes for unquoted values
+    // Escape spaces, equals, and backslashes for unquoted values
     return string
       .replacingOccurrences(of: "\\", with: "\\\\")
+      .replacingOccurrences(of: "=", with: "\\=")
       .replacingOccurrences(of: " ", with: "\\ ")
   }
 
