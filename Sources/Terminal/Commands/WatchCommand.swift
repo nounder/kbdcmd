@@ -48,6 +48,9 @@ struct WatchCommand: AsyncParsableCommand {
   @Option(name: .long, help: "Stop when an event matches this query (e.g., type=AXValueChanged)")
   var until: [String] = []
 
+  @Option(name: .shortAndLong, help: "Fields to output (e.g., -f time,app or -f time -f app). Available: time, app, type, role, bounds, display, title, desc, value, text")
+  var field: [String] = []
+
   @MainActor
   func run() async throws {
     try Permissions.checkAccessibility()
@@ -55,9 +58,18 @@ struct WatchCommand: AsyncParsableCommand {
     let queryFilter = try query.isEmpty ? nil : QueryFilter(conditions: query)
     let untilFilter = try until.isEmpty ? nil : QueryFilter(conditions: until)
 
+    // Parse fields: support both "-f time,app" and "-f time -f app"
+    let fields: [String]
+    if field.isEmpty {
+      fields = ["time", "app", "type", "role", "bounds"]
+    } else {
+      fields = field.flatMap { $0.split(separator: ",").map(String.init) }
+    }
+
     let watcher = NotificationWatcher(
       maxDepth: depth,
       verbose: verbose,
+      fields: fields,
       queryFilter: queryFilter,
       untilFilter: untilFilter
     )
@@ -88,6 +100,7 @@ private final class NotificationWatcher {
   private var workspaceObservers: [NSObjectProtocol] = []
   private let maxDepth: Int
   private let verbose: Bool
+  private let fields: [String]
   private let queryFilter: QueryFilter?
   private let untilFilter: QueryFilter?
   private(set) var shouldStop: Bool = false
@@ -140,9 +153,10 @@ private final class NotificationWatcher {
     kAXHelpTagCreatedNotification,
   ]
 
-  init(maxDepth: Int, verbose: Bool, queryFilter: QueryFilter? = nil, untilFilter: QueryFilter? = nil) {
+  init(maxDepth: Int, verbose: Bool, fields: [String], queryFilter: QueryFilter? = nil, untilFilter: QueryFilter? = nil) {
     self.maxDepth = maxDepth
     self.verbose = verbose
+    self.fields = fields
     self.queryFilter = queryFilter
     self.untilFilter = untilFilter
   }
@@ -206,11 +220,8 @@ private final class NotificationWatcher {
     let appName = app.localizedName ?? "Unknown"
 
     // Check if app matches query filter (if filtering by app)
-    if let filter = queryFilter {
-      let testLine = "app=\"\(escapeQuoted(appName))\""
-      if !filter.matchesAppFilter(line: testLine) {
-        return
-      }
+    if let filter = queryFilter, !filter.matchesApp(appName) {
+      return
     }
 
     // Check if we already have an observer for this pid
@@ -255,11 +266,12 @@ private final class NotificationWatcher {
 
     observers.append((pid: pid, observer: observer))
 
-    let prefix = isLaunch ? "Launch detected" : "Watching"
-    if verbose {
-      output("[\(timestamp())] \(prefix): \(appName) (pid: \(pid)) - \(elementCount) elements")
-    } else {
-      output("[\(timestamp())] \(prefix): \(appName)")
+    if isLaunch {
+      if verbose {
+        output("[\(timestamp())] Launch detected: \(appName) (pid: \(pid)) - \(elementCount) elements")
+      } else {
+        output("[\(timestamp())] Launch detected: \(appName)")
+      }
     }
   }
 
@@ -346,49 +358,33 @@ private final class NotificationWatcher {
     }
 
     // Get element info for context
-    let role = getAttr(element, kAXRoleAttribute) ?? "Unknown"
-    let title = getAttr(element, kAXTitleAttribute)
-    let description = getAttr(element, kAXDescriptionAttribute)
-    let value = getAttr(element, kAXValueAttribute)
-
-    // Get app name from element
     var pid: pid_t = 0
     AXUIElementGetPid(element, &pid)
-    let appName = NSRunningApplication(processIdentifier: pid)?.localizedName ?? "Unknown"
 
-    // Extract notification type (e.g., "kAXValueChangedNotification" -> "AXValueChanged")
-    let notificationType = extractNotificationType(notification)
+    let bounds = getBounds(element)
+    let display = bounds.flatMap { getDisplayIndex(for: $0.origin) }
 
-    // Build structured output with quoted values
-    var output = "time=\"\(timestamp())\" type=\"\(escapeQuoted(notificationType))\" app=\"\(escapeQuoted(appName))\" role=\"\(escapeQuoted(role))\""
-
-    if verbose {
-      if let title = title, !title.isEmpty {
-        output += " title=\"\(escapeQuoted(truncate(title)))\""
-      }
-      if let description = description, !description.isEmpty {
-        output += " desc=\"\(escapeQuoted(truncate(description)))\""
-      }
-      if let value = value, !value.isEmpty {
-        output += " value=\"\(escapeQuoted(truncate(value)))\""
-      }
-    } else {
-      // Show the most useful identifier
-      let identifier = title ?? description ?? value
-      if let id = identifier, !id.isEmpty {
-        output += " text=\"\(escapeQuoted(truncate(id)))\""
-      }
-    }
+    let notif = WatchNotification(
+      time: timestamp(),
+      type: extractNotificationType(notification),
+      app: NSRunningApplication(processIdentifier: pid)?.localizedName ?? "Unknown",
+      role: getAttr(element, kAXRoleAttribute) ?? "Unknown",
+      title: getAttr(element, kAXTitleAttribute),
+      desc: getAttr(element, kAXDescriptionAttribute),
+      value: getAttr(element, kAXValueAttribute),
+      bounds: bounds,
+      display: display
+    )
 
     // Apply query filter before outputting
     if let filter = queryFilter {
-      guard filter.matches(line: output) else { return }
+      guard filter.matches(notif) else { return }
     }
 
-    self.output(output)
+    output(notif.format(fields: fields))
 
     // Check if we should stop (after outputting the matching event)
-    if let untilFilter = untilFilter, untilFilter.matches(line: output) {
+    if let untilFilter = untilFilter, untilFilter.matches(notif) {
       shouldStop = true
     }
   }
@@ -399,6 +395,37 @@ private final class NotificationWatcher {
       return nil
     }
     return value as? String
+  }
+
+  private func getBounds(_ element: AXUIElement) -> CGRect? {
+    var posValue: AnyObject?
+    var sizeValue: AnyObject?
+    guard AXUIElementCopyAttributeValue(element, kAXPositionAttribute as CFString, &posValue) == .success,
+          AXUIElementCopyAttributeValue(element, kAXSizeAttribute as CFString, &sizeValue) == .success,
+          CFGetTypeID(posValue as CFTypeRef) == AXValueGetTypeID(),
+          CFGetTypeID(sizeValue as CFTypeRef) == AXValueGetTypeID() else {
+      return nil
+    }
+    var point = CGPoint.zero
+    var size = CGSize.zero
+    guard AXValueGetValue(posValue as! AXValue, .cgPoint, &point),
+          AXValueGetValue(sizeValue as! AXValue, .cgSize, &size) else {
+      return nil
+    }
+    return CGRect(origin: point, size: size)
+  }
+
+  /// Returns the display index (0 = main) containing the given point.
+  /// Note: This returns physical display index, not macOS Space ID.
+  /// Space IDs require private APIs (CGSConnection/SkyLight) which we don't use.
+  private func getDisplayIndex(for point: CGPoint) -> Int? {
+    let screens = NSScreen.screens
+    for (index, screen) in screens.enumerated() {
+      if screen.frame.contains(point) {
+        return index
+      }
+    }
+    return nil
   }
 
   private func extractNotificationType(_ notification: String) -> String {
@@ -414,20 +441,6 @@ private final class NotificationWatcher {
     return result
   }
 
-  private func escapeQuoted(_ string: String) -> String {
-    // Escape backslashes, quotes, and newlines for quoted values
-    return string
-      .replacingOccurrences(of: "\\", with: "\\\\")
-      .replacingOccurrences(of: "\r\n", with: "\\r\\n")  // Windows newline first
-      .replacingOccurrences(of: "\n", with: "\\n")       // Unix newline
-      .replacingOccurrences(of: "\r", with: "\\r")       // Mac newline
-      .replacingOccurrences(of: "\"", with: "\\\"")
-  }
-
-  private func truncate(_ string: String, max: Int = 50) -> String {
-    string.count > max ? String(string.prefix(max)) + "..." : string
-  }
-
   private func timestamp() -> String {
     let formatter = DateFormatter()
     formatter.dateFormat = "HH:mm:ss.SSS"
@@ -437,6 +450,64 @@ private final class NotificationWatcher {
   private func output(_ message: String) {
     print(message)
     fflush(stdout)
+  }
+}
+
+private struct WatchNotification {
+  let time: String
+  let type: String
+  let app: String
+  let role: String
+  let title: String?
+  let desc: String?
+  let value: String?
+  let bounds: CGRect?
+  let display: Int?
+
+  func field(_ name: String) -> String? {
+    switch name {
+    case "time": return time
+    case "type": return type
+    case "app": return app
+    case "role": return role
+    case "title": return title
+    case "desc": return desc
+    case "value": return value
+    case "text": return title ?? desc ?? value
+    case "bounds": return bounds.map { formatBounds($0) }
+    case "display": return display.map { String($0) }
+    default: return nil
+    }
+  }
+
+  private func formatBounds(_ rect: CGRect) -> String {
+    "\(Int(rect.origin.x)),\(Int(rect.origin.y)),\(Int(rect.width)),\(Int(rect.height))"
+  }
+
+  func format(fields: [String], truncateLength: Int = 50) -> String {
+    var parts: [String] = []
+
+    for fieldName in fields {
+      if let value = field(fieldName) {
+        let escaped = escape(truncate(value, max: truncateLength))
+        parts.append("\(fieldName)=\"\(escaped)\"")
+      }
+    }
+
+    return parts.joined(separator: "\t")
+  }
+
+  private func escape(_ string: String) -> String {
+    string
+      .replacingOccurrences(of: "\\", with: "\\\\")
+      .replacingOccurrences(of: "\r\n", with: "\\r\\n")
+      .replacingOccurrences(of: "\n", with: "\\n")
+      .replacingOccurrences(of: "\r", with: "\\r")
+      .replacingOccurrences(of: "\"", with: "\\\"")
+  }
+
+  private func truncate(_ string: String, max: Int) -> String {
+    string.count > max ? String(string.prefix(max)) + "..." : string
   }
 }
 
@@ -455,18 +526,21 @@ private struct QueryFilter {
     let op: MatchOperator
     let pattern: String
 
-    func matches(in line: String) -> Bool {
-      guard let value = extractFieldValue(field, from: line) else { return false }
+    func matches(_ notification: WatchNotification) -> Bool {
+      guard let value = notification.field(field) else { return false }
+      return matchesValue(value)
+    }
 
+    func matchesValue(_ value: String) -> Bool {
       switch op {
       case .equals:
         return value == pattern
       case .notEquals:
         return value != pattern
       case .glob:
-        return matches(value: value, glob: pattern)
+        return matchesGlob(value: value, glob: pattern)
       case .notGlob:
-        return !matches(value: value, glob: pattern)
+        return !matchesGlob(value: value, glob: pattern)
       case .greaterThan:
         return (Double(value) ?? 0) > (Double(pattern) ?? 0)
       case .lessThan:
@@ -474,7 +548,7 @@ private struct QueryFilter {
       }
     }
 
-    private func matches(value: String, glob: String) -> Bool {
+    private func matchesGlob(value: String, glob: String) -> Bool {
       let regex = NSRegularExpression.escapedPattern(for: glob)
         .replacingOccurrences(of: "\\*", with: ".*")
         .replacingOccurrences(of: "\\?", with: ".")
@@ -482,14 +556,6 @@ private struct QueryFilter {
         return false
       }
       return regex.firstMatch(in: value, range: NSRange(value.startIndex..., in: value)) != nil
-    }
-
-    private func extractFieldValue(_ field: String, from line: String) -> String? {
-      let pattern = "\(NSRegularExpression.escapedPattern(for: field))=\"([^\"]*)\""
-      guard let regex = try? NSRegularExpression(pattern: pattern) else { return nil }
-      guard let match = regex.firstMatch(in: line, range: NSRange(line.startIndex..., in: line)) else { return nil }
-      guard let range = Range(match.range(at: 1), in: line) else { return nil }
-      return String(line[range])
     }
   }
 
@@ -545,16 +611,13 @@ private struct QueryFilter {
     throw NSError(domain: "QueryFilter", code: 1, userInfo: [NSLocalizedDescriptionKey: "Invalid query condition: '\(condition)'. Use operators: =, !=, ~, !~, >, <"])
   }
 
-  func matches(line: String) -> Bool {
-    conditions.allSatisfy { $0.matches(in: line) }
+  func matches(_ notification: WatchNotification) -> Bool {
+    conditions.allSatisfy { $0.matches(notification) }
   }
 
-  /// Check if the line matches app-related conditions only.
-  /// Used to filter apps before adding observers.
-  func matchesAppFilter(line: String) -> Bool {
+  func matchesApp(_ appName: String) -> Bool {
     let appConditions = conditions.filter { $0.field == "app" }
-    // If no app conditions, all apps match
     guard !appConditions.isEmpty else { return true }
-    return appConditions.allSatisfy { $0.matches(in: line) }
+    return appConditions.allSatisfy { $0.matchesValue(appName) }
   }
 }
