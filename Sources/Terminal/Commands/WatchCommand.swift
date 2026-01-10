@@ -51,6 +51,9 @@ struct WatchCommand: AsyncParsableCommand {
   @Option(name: .shortAndLong, help: "Fields to output (e.g., -f time,app or -f _,label). Use _ for defaults (time,app,type,role,bounds). Available: time, app, type, role, desc, subrole, bounds, display, title, label, value")
   var field: [String] = []
 
+  @Flag(name: .long, help: "Output in JSON format (one object per line)")
+  var json: Bool = false
+
   @MainActor
   func run() async throws {
     try Permissions.checkAccessibility()
@@ -73,6 +76,7 @@ struct WatchCommand: AsyncParsableCommand {
       maxDepth: depth,
       verbose: verbose,
       fields: fields,
+      jsonOutput: json,
       queryFilter: queryFilter,
       untilFilter: untilFilter
     )
@@ -104,6 +108,7 @@ private final class NotificationWatcher {
   private let maxDepth: Int
   private let verbose: Bool
   private let fields: [String]
+  private let jsonOutput: Bool
   private let neededFields: Set<String>
   private let queryFilter: QueryFilter?
   private let untilFilter: QueryFilter?
@@ -157,10 +162,11 @@ private final class NotificationWatcher {
     kAXHelpTagCreatedNotification,
   ]
 
-  init(maxDepth: Int, verbose: Bool, fields: [String], queryFilter: QueryFilter? = nil, untilFilter: QueryFilter? = nil) {
+  init(maxDepth: Int, verbose: Bool, fields: [String], jsonOutput: Bool = false, queryFilter: QueryFilter? = nil, untilFilter: QueryFilter? = nil) {
     self.maxDepth = maxDepth
     self.verbose = verbose
     self.fields = fields
+    self.jsonOutput = jsonOutput
     self.queryFilter = queryFilter
     self.untilFilter = untilFilter
 
@@ -398,7 +404,11 @@ private final class NotificationWatcher {
       guard filter.matches(notif) else { return }
     }
 
-    output(notif.format(fields: fields))
+    if jsonOutput {
+      output(notif.formatJSON(fields: fields))
+    } else {
+      output(notif.format(fields: fields))
+    }
 
     // Check if we should stop (after outputting the matching event)
     if let untilFilter = untilFilter, untilFilter.matches(notif) {
@@ -514,6 +524,26 @@ private struct WatchNotification {
     }
 
     return parts.joined(separator: "\t")
+  }
+
+  func formatJSON(fields: [String]) -> String {
+    var dict: [String: Any] = [:]
+
+    for fieldName in fields {
+      if fieldName == "bounds", let b = bounds {
+        dict["bounds"] = [Int(b.origin.x), Int(b.origin.y), Int(b.width), Int(b.height)]
+      } else if fieldName == "display", let d = display {
+        dict["display"] = d
+      } else if let value = field(fieldName) {
+        dict[fieldName] = value
+      }
+    }
+
+    guard let data = try? JSONSerialization.data(withJSONObject: dict, options: [.sortedKeys]),
+          let json = String(data: data, encoding: .utf8) else {
+      return "{}"
+    }
+    return json
   }
 
   private func escape(_ string: String) -> String {

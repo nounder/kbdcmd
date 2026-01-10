@@ -13,7 +13,7 @@ struct WindowListCommand: ParsableCommand {
     @Flag(name: .long, help: "Include minimized windows")
     var includeMinimized: Bool = false
 
-    @Option(name: .long, help: "Filter by application name")
+    @Option(name: .shortAndLong, help: "Filter by application name")
     var app: String?
 
     func run() throws {

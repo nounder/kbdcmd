@@ -58,12 +58,17 @@ private final class AXRegistry {
     return CGRect(origin: point, size: sz)
   }
 
-  func getChildren(_ element: AXUIElement) -> [AXUIElement] {
+  func getChildren(_ element: AXUIElement, visibleOnly: Bool) -> [AXUIElement] {
     let key = ObjectIdentifier(element)
     if let cached = childrenCache[key] {
       return cached
     }
-    let result = (getAttr(element, kAXChildrenAttribute) as? [AXUIElement]) ?? []
+    let attr = visibleOnly ? kAXVisibleChildrenAttribute : kAXChildrenAttribute
+    var result = (getAttr(element, attr) as? [AXUIElement]) ?? []
+    // Fallback to all children if visible children returns empty
+    if visibleOnly && result.isEmpty {
+      result = (getAttr(element, kAXChildrenAttribute) as? [AXUIElement]) ?? []
+    }
     childrenCache[key] = result
     return result
   }
@@ -83,21 +88,45 @@ private final class AXRegistry {
   }
 }
 
-struct WalkerCommand: AsyncParsableCommand {
+private struct WalkerNode {
+  let role: String
+  let rawRole: String
+  let depth: Int
+  let nodeId: String
+  let title: String?
+  let value: String?
+  let description: String?
+  let roleDescription: String?
+  let label: String?
+  let bounds: CGRect?
+  let actions: [String]
+  let hasChildren: Bool
+}
+
+enum OutputFormat: String, ExpressibleByArgument, CaseIterable {
+  case indent
+  case xml
+}
+
+struct TreeCommand: AsyncParsableCommand {
   static let configuration = CommandConfiguration(
-    commandName: "walker",
+    commandName: "tree",
     abstract: "Walk the accessibility tree",
     discussion: """
-      Traverses the accessibility tree of the frontmost window and outputs XML.
+      Traverses the accessibility tree of the frontmost window and outputs it.
 
       Examples:
-        kbdcmd walker                    # Walk focused window
-        kbdcmd walker --max-depth 5      # Limit traversal to 5 levels deep
-        kbdcmd walker --all-windows      # Walk entire app
-        kbdcmd walker --title "My Doc"   # Walk window with matching title
-        kbdcmd walker --pid 12345        # Walk window by process ID
+        kbdcmd tree                    # Walk focused window (indent format)
+        kbdcmd tree --format xml       # Walk focused window (XML format)
+        kbdcmd tree --max-depth 5      # Limit traversal to 5 levels deep
+        kbdcmd tree --all-windows      # Walk entire app
+        kbdcmd tree --title "My Doc"   # Walk window with matching title
+        kbdcmd tree --pid 12345        # Walk window by process ID
       """
   )
+
+  @Option(name: .long, help: "Output format: indent (default) or xml")
+  var format: OutputFormat = .indent
 
   @Option(name: .long, help: "Maximum depth to traverse (unlimited if not specified)")
   var maxDepth: Int?
@@ -105,7 +134,7 @@ struct WalkerCommand: AsyncParsableCommand {
   @Option(name: .long, help: "Target window by CGWindowID (use window-list to find)")
   var cgid: Int?
 
-  @Option(name: .long, help: "Filter by application name or bundle ID")
+  @Option(name: .shortAndLong, help: "Filter by application name or bundle ID")
   var app: String?
 
   @Option(name: .long, help: "Filter by window title")
@@ -117,29 +146,26 @@ struct WalkerCommand: AsyncParsableCommand {
   @Flag(name: .long, help: "Include element IDs")
   var id: Bool = false
 
-  @Flag(name: .long, help: "Include position and size information")
-  var bounds: Bool = false
+  @Flag(inversion: .prefixedNo, help: "Include position and size information (default: on)")
+  var bounds: Bool = true
 
-  @Flag(name: .long, help: "Use human-readable tag names")
-  var roleTag: Bool = false
+  @Flag(name: .customLong("role-tag"), inversion: .prefixedNo, help: "Use human-readable tag names (default: on)")
+  var roleTag: Bool = true
 
   @Flag(name: .long, help: "Traverse entire app instead of just focused window")
   var allWindows: Bool = false
 
-  @Flag(name: .long, help: "Skip empty AXGroup elements")
-  var noEmptyGroups: Bool = false
+  @Flag(name: .customLong("collapse-title"), inversion: .prefixedNo, help: "Hide description if same as title (default: on)")
+  var collapseTitle: Bool = true
 
-  @Flag(name: .long, help: "Hide description if same as title")
-  var collapseTitle: Bool = false
+  @Flag(name: .customLong("inline-text"), inversion: .prefixedNo, help: "Render AXStaticText as text nodes (default: on)")
+  var inlineText: Bool = true
 
-  @Flag(name: .long, help: "Render AXStaticText as text nodes")
-  var inlineText: Bool = false
+  @Flag(name: .customLong("scrollbar"), inversion: .prefixedNo, help: "Include scroll bar elements (default: off)")
+  var scrollbar: Bool = false
 
-  @Flag(name: .long, help: "Skip scroll bar elements")
-  var noScrollbar: Bool = false
-
-  @Flag(name: .long, help: "Include available actions")
-  var action: Bool = false
+  @Flag(inversion: .prefixedNo, help: "Include available actions (default: on)")
+  var action: Bool = true
 
   @Option(name: .long, help: "Include actions matching pattern (glob: 'AX*', list: 'AXPress,AXScroll')")
   var actionP: String?
@@ -147,11 +173,17 @@ struct WalkerCommand: AsyncParsableCommand {
   @Flag(name: .long, help: "Include action descriptions as values")
   var actionDesc: Bool = false
 
-  @Flag(name: .long, help: "Only show elements with width and height > 5px")
-  var visual: Bool = false
+  @Flag(name: .customLong("tiny"), inversion: .prefixedNo, help: "Include tiny elements (width/height <= 5px) (default: off)")
+  var tiny: Bool = false
 
-  @Flag(name: .long, help: "Hide title/description/value if empty or whitespace-only")
-  var noEmpty: Bool = false
+  @Flag(name: .customLong("empty"), inversion: .prefixedNo, help: "Include empty groups and elements without text/attributes/actions (default: off)")
+  var empty: Bool = false
+
+  @Flag(name: .shortAndLong, help: "Show all elements without filtering (enables --scrollbar --tiny --empty --invisible)")
+  var verbose: Bool = false
+
+  @Flag(name: .long, help: "Include invisible/offscreen children (default: visible only)")
+  var invisible: Bool = false
 
   @MainActor
   func run() async throws {
@@ -221,8 +253,22 @@ struct WalkerCommand: AsyncParsableCommand {
     }
 
     let registry = AXRegistry()
+    let nodes = traverse(root: root, registry: registry, actionMatcher: actionMatcher)
 
-    var openTags: [(role: String, depth: Int)] = []
+    switch format {
+    case .indent:
+      printIndentFormat(nodes: nodes, actionMatcher: actionMatcher)
+    case .xml:
+      printXmlFormat(nodes: nodes, actionMatcher: actionMatcher)
+    }
+  }
+
+  private func traverse(
+    root: AXUIElement,
+    registry: AXRegistry,
+    actionMatcher: ((String) -> Bool)?
+  ) -> [WalkerNode] {
+    var nodes: [WalkerNode] = []
     var stack: [(element: AXUIElement, depth: Int, parentId: String?, siblingIndex: Int)] = [
       (root, 0, nil, 0)
     ]
@@ -232,36 +278,21 @@ struct WalkerCommand: AsyncParsableCommand {
         continue
       }
 
-      while let last = openTags.last, last.depth >= depth {
-        openTags.removeLast()
-        print("\(String(repeating: "  ", count: last.depth))</\(last.role)>")
-      }
-
       let nodeId = parentId.map { "\($0)-\(siblingIndex)" } ?? "#0"
       let rawRole = registry.getAttr(element, kAXRoleAttribute) as? String ?? "Unknown"
-      let title = (registry.getAttr(element, kAXTitleAttribute) as? String).map { escapeAttribute($0) }
-      let children = registry.getChildren(element)
+      let visibleOnly = !(verbose || invisible)
+      let children = registry.getChildren(element, visibleOnly: visibleOnly)
       let hasChildren = !children.isEmpty && (maxDepth == nil || depth < maxDepth!)
 
-      // Skip empty groups and zero-size elements (unless they have actions)
-      if noEmptyGroups {
-        if rawRole == "AXGroup" && children.isEmpty {
-          continue
-        }
-        if let b = registry.getBounds(element), b.width == 0 || b.height == 0 {
-          if registry.getActions(element).isEmpty {
-            continue
-          }
-        }
-      }
+      let includeScrollbar = verbose || scrollbar
+      let includeTiny = verbose || tiny
+      let includeEmpty = verbose || empty
 
-      // Skip scrollbar elements
-      if noScrollbar && rawRole == "AXScrollBar" {
+      if !includeScrollbar && rawRole == "AXScrollBar" {
         continue
       }
 
-      // Skip elements smaller than 5px
-      if visual {
+      if !includeTiny {
         if let b = registry.getBounds(element) {
           if b.width <= 5 || b.height <= 5 {
             continue
@@ -271,10 +302,12 @@ struct WalkerCommand: AsyncParsableCommand {
         }
       }
 
-      let value = (registry.getAttr(element, kAXValueAttribute) as? String).map { escapeAttribute($0) }
-      let description = (registry.getAttr(element, kAXDescriptionAttribute) as? String).map { escapeAttribute($0) }
+      let title = registry.getAttr(element, kAXTitleAttribute) as? String
+      let value = registry.getAttr(element, kAXValueAttribute) as? String
+      let description = registry.getAttr(element, kAXDescriptionAttribute) as? String
       let rawRoleDescription = registry.getAttr(element, kAXRoleDescriptionAttribute) as? String
-      let label = (registry.getAttr(element, "AXLabel") as? String).map { escapeAttribute($0) }
+      let label = registry.getAttr(element, "AXLabel") as? String
+      let elementBounds = bounds ? registry.getBounds(element) : nil
 
       let role: String
       let showRoleDescription: Bool
@@ -282,83 +315,212 @@ struct WalkerCommand: AsyncParsableCommand {
         role = customTag
         showRoleDescription = false
       } else if roleTag, let rd = rawRoleDescription, !rd.isEmpty, rd.lowercased() != "unknown" {
-        role = escapeAttribute(hyphenize(rd))
+        role = hyphenize(rd)
         showRoleDescription = false
       } else {
-        // If rawRole is "Unknown" and we have --role-tag, show the AX role for debugging
         if roleTag && rawRole == "Unknown" {
           role = "AXUnknown"
         } else {
-          role = escapeAttribute(rawRole)
+          role = rawRole
         }
         showRoleDescription = rawRoleDescription != nil && !rawRoleDescription!.isEmpty && rawRoleDescription!.lowercased() != "unknown"
       }
 
-      let indent = String(repeating: "  ", count: depth)
-      var attrs = ""
-      if id {
-        attrs += "id=\"\(escapeAttribute(nodeId))\""
-      }
-      if bounds, let b = registry.getBounds(element) {
-        if !attrs.isEmpty { attrs += " " }
-        attrs += "bounds=\"\(Int(b.origin.x)),\(Int(b.origin.y)),\(Int(b.width)),\(Int(b.height))\""
-      }
-      if let title = title, hasContent(title) {
-        if !attrs.isEmpty { attrs += " " }
-        attrs += "title=\"\(truncate(title))\""
-      }
-      if let value = value, hasContent(value) {
-        if !attrs.isEmpty { attrs += " " }
-        attrs += "value=\"\(truncate(value))\""
-      }
-      let showDescription = description != nil && hasContent(description!) && !(collapseTitle && description == title)
-      if showDescription {
-        if !attrs.isEmpty { attrs += " " }
-        attrs += "description=\"\(truncate(description!))\""
-      }
-      if showRoleDescription, let rd = rawRoleDescription {
-        if !attrs.isEmpty { attrs += " " }
-        attrs += "roleDescription=\"\(truncate(escapeAttribute(rd)))\""
-      }
-      if let label = label, !label.isEmpty {
-        if !attrs.isEmpty { attrs += " " }
-        attrs += "label=\"\(truncate(label))\""
-      }
+      let actions: [String]
       if let actionMatcher = actionMatcher {
-        let actionNames = registry.getActions(element).filter(actionMatcher)
-        for actionName in actionNames {
-          if !attrs.isEmpty { attrs += " " }
-          if actionDesc, let desc = getActionDescription(element, actionName), !desc.isEmpty {
-            attrs += "action:\(actionName)=\"\(escapeAttribute(desc))\""
-          } else {
-            attrs += "action:\(actionName)"
-          }
+        actions = registry.getActions(element).filter(actionMatcher)
+      } else {
+        actions = []
+      }
+
+      // Skip elements with no meaningful content (default behavior, use --empty or --verbose to include)
+      if !includeEmpty {
+        let hasTitle = title.map { !$0.trimmingCharacters(in: .whitespaces).isEmpty } ?? false
+        let hasValue = value.map { !$0.trimmingCharacters(in: .whitespaces).isEmpty } ?? false
+        let hasDesc = description.map { !$0.trimmingCharacters(in: .whitespaces).isEmpty } ?? false
+        let hasLabel = label.map { !$0.trimmingCharacters(in: .whitespaces).isEmpty } ?? false
+        let hasRoleDesc = rawRoleDescription != nil && !rawRoleDescription!.isEmpty && rawRoleDescription!.lowercased() != "unknown"
+        let hasActions = !actions.isEmpty
+
+        if !hasTitle && !hasValue && !hasDesc && !hasLabel && !hasRoleDesc && !hasActions {
+          continue
         }
       }
 
-      // Handle AXStaticText as text node when --text is set
-      if inlineText && rawRole == "AXStaticText" {
-        let textContent = (registry.getAttr(element, kAXValueAttribute) as? String) ?? (registry.getAttr(element, kAXTitleAttribute) as? String) ?? ""
-        if !textContent.isEmpty {
-          print("\(indent)\(escapeAttribute(textContent))")
-        }
-      } else {
-        let attrStr = attrs.isEmpty ? "" : " \(attrs)"
-        if hasChildren {
-          print("\(indent)<\(role)\(attrStr)>")
-          openTags.append((role: role, depth: depth))
-        } else {
-          print("\(indent)<\(role)\(attrStr) />")
-        }
-      }
+      let node = WalkerNode(
+        role: role,
+        rawRole: rawRole,
+        depth: depth,
+        nodeId: nodeId,
+        title: title,
+        value: value,
+        description: description,
+        roleDescription: showRoleDescription ? rawRoleDescription : nil,
+        label: label,
+        bounds: elementBounds,
+        actions: actions,
+        hasChildren: hasChildren
+      )
+      nodes.append(node)
 
       for (index, child) in children.enumerated().reversed() {
         stack.append((child, depth + 1, nodeId, index))
       }
     }
 
+    return nodes
+  }
+
+  private func printIndentFormat(nodes: [WalkerNode], actionMatcher: ((String) -> Bool)?) {
+    for node in nodes {
+      if inlineText && node.rawRole == "AXStaticText" {
+        let textContent = node.value ?? node.title ?? ""
+        if !textContent.isEmpty {
+          let indent = String(repeating: "  ", count: node.depth)
+          print("\(indent)\(textContent)")
+        }
+        continue
+      }
+
+      let indent = String(repeating: "  ", count: node.depth)
+      var parts: [String] = [node.role.uppercased()]
+
+      // Determine text part and remaining attributes
+      // Priority: title, then value -> description -> label for text part
+      let title = node.title.flatMap { hasContent($0) ? $0 : nil }
+      let value = node.value.flatMap { hasContent($0) ? $0 : nil }
+      let description = node.description.flatMap { hasContent($0) ? $0 : nil }
+      let label = node.label.flatMap { hasContent($0) ? $0 : nil }
+
+      var textPart: String? = nil
+      var showValue = false
+      var showDescription = false
+      var showLabel = false
+
+      if let t = title {
+        // Title is always the text part if present
+        textPart = t
+        // Show other attrs only if different from title
+        showValue = value != nil && value != t
+        showDescription = description != nil && description != t && !(collapseTitle && description == t)
+        showLabel = label != nil && label != t
+      } else {
+        // No title - collapse value/description/label
+        // Pick first non-nil as text part, show others only if different
+        if let v = value {
+          textPart = v
+          showDescription = description != nil && description != v
+          showLabel = label != nil && label != v
+        } else if let d = description {
+          textPart = d
+          showLabel = label != nil && label != d
+        } else if let l = label {
+          textPart = l
+        }
+      }
+
+      if let text = textPart {
+        parts.append("\"\(truncate(text))\"")
+      }
+
+      if showValue, let v = value {
+        parts.append("value=\"\(truncate(v))\"")
+      }
+
+      if showDescription, let d = description {
+        parts.append("description=\"\(truncate(d))\"")
+      }
+
+      if let rd = node.roleDescription {
+        parts.append("roleDescription=\"\(truncate(rd))\"")
+      }
+
+      if showLabel, let l = label {
+        parts.append("label=\"\(truncate(l))\"")
+      }
+
+      if id {
+        parts.append("id=\"\(node.nodeId)\"")
+      }
+
+      // Actions as attributes (e.g., on:AXPress)
+      for action in node.actions {
+        parts.append("on:\(action)")
+      }
+
+      if let b = node.bounds {
+        parts.append("@\(Int(b.origin.x)),\(Int(b.origin.y)),\(Int(b.width)),\(Int(b.height))")
+      }
+
+      print("\(indent)\(parts.joined(separator: " "))")
+    }
+  }
+
+  private func printXmlFormat(nodes: [WalkerNode], actionMatcher: ((String) -> Bool)?) {
+    var openTags: [(role: String, depth: Int)] = []
+
+    for node in nodes {
+      while let last = openTags.last, last.depth >= node.depth {
+        openTags.removeLast()
+        print("\(String(repeating: "  ", count: last.depth))</\(escapeAttribute(last.role))>")
+      }
+
+      let indent = String(repeating: "  ", count: node.depth)
+
+      if inlineText && node.rawRole == "AXStaticText" {
+        let textContent = node.value ?? node.title ?? ""
+        if !textContent.isEmpty {
+          print("\(indent)\(escapeAttribute(textContent))")
+        }
+        continue
+      }
+
+      var attrs = ""
+      if id {
+        attrs += "id=\"\(escapeAttribute(node.nodeId))\""
+      }
+      if let b = node.bounds {
+        if !attrs.isEmpty { attrs += " " }
+        attrs += "bounds=\"\(Int(b.origin.x)),\(Int(b.origin.y)),\(Int(b.width)),\(Int(b.height))\""
+      }
+      if let title = node.title, hasContent(title) {
+        if !attrs.isEmpty { attrs += " " }
+        attrs += "title=\"\(truncate(escapeAttribute(title)))\""
+      }
+      if let value = node.value, hasContent(value) {
+        if !attrs.isEmpty { attrs += " " }
+        attrs += "value=\"\(truncate(escapeAttribute(value)))\""
+      }
+      let showDescription = node.description != nil && hasContent(node.description!) && !(collapseTitle && node.description == node.title)
+      if showDescription {
+        if !attrs.isEmpty { attrs += " " }
+        attrs += "description=\"\(truncate(escapeAttribute(node.description!)))\""
+      }
+      if let rd = node.roleDescription {
+        if !attrs.isEmpty { attrs += " " }
+        attrs += "roleDescription=\"\(truncate(escapeAttribute(rd)))\""
+      }
+      if let label = node.label, !label.isEmpty {
+        if !attrs.isEmpty { attrs += " " }
+        attrs += "label=\"\(truncate(escapeAttribute(label)))\""
+      }
+      for actionName in node.actions {
+        if !attrs.isEmpty { attrs += " " }
+        attrs += "action:\(actionName)"
+      }
+
+      let role = escapeAttribute(node.role)
+      let attrStr = attrs.isEmpty ? "" : " \(attrs)"
+      if node.hasChildren {
+        print("\(indent)<\(role)\(attrStr)>")
+        openTags.append((role: node.role, depth: node.depth))
+      } else {
+        print("\(indent)<\(role)\(attrStr) />")
+      }
+    }
+
     while let last = openTags.popLast() {
-      print("\(String(repeating: "  ", count: last.depth))</\(last.role)>")
+      print("\(String(repeating: "  ", count: last.depth))</\(escapeAttribute(last.role))>")
     }
   }
 
@@ -597,7 +759,7 @@ struct WalkerCommand: AsyncParsableCommand {
   }
 
   private func hasContent(_ string: String) -> Bool {
-    noEmpty ? !string.trimmingCharacters(in: .whitespaces).isEmpty : !string.isEmpty
+    !empty ? !string.trimmingCharacters(in: .whitespaces).isEmpty : !string.isEmpty
   }
 
   private func hyphenize(_ string: String) -> String {

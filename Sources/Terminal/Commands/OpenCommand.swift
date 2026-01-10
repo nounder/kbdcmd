@@ -63,9 +63,34 @@ struct OpenCommand: AsyncParsableCommand {
         $0.bundleIdentifier == bundleId
       })
     {
+      let axApp = AXUIElementCreateApplication(runningApp.processIdentifier)
+
+      var axValue: AnyObject?
+      let result = AXUIElementCopyAttributeValue(
+        axApp, kAXWindowsAttribute as CFString, &axValue)
+
+      if result == .success, let axWindows = axValue as? [AXUIElement] {
+        // Filter out windows without a valid windowId (e.g., Finder's desktop which is AXScrollArea)
+        let realWindows = axWindows.filter { $0.containingWindowId() != nil }
+        let hasNonMinimizedWindow = realWindows.contains { $0.get(Ax.minimizedAttr) != true }
+
+        if !hasNonMinimizedWindow {
+          // No visible windows - try to create a new window via menu
+          if WindowManager.main.createNewWindowViaMenu(for: axApp) {
+            runningApp.activate()
+          } else {
+            // If menu approach failed, activate and re-open the app
+            runningApp.activate()
+            let config = NSWorkspace.OpenConfiguration()
+            try await NSWorkspace.shared.openApplication(at: appURL, configuration: config)
+          }
+          return
+        }
+      }
+
       runningApp.activate()
     } else {
-      // Launch the app and wait for it
+      // Launch the app
       let config = NSWorkspace.OpenConfiguration()
       try await NSWorkspace.shared.openApplication(at: appURL, configuration: config)
     }

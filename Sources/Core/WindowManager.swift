@@ -9,8 +9,24 @@ struct Window {
   var app: NSRunningApplication
 }
 
-enum DesktopError: Error {
+enum DesktopError: Error, LocalizedError {
   case invalidDesktopNumber
+  case dockNotFound
+  case missionControlNotAccessible
+  case spaceNotFound(Int)
+
+  var errorDescription: String? {
+    switch self {
+    case .invalidDesktopNumber:
+      return "Invalid desktop number"
+    case .dockNotFound:
+      return "Dock application not found"
+    case .missionControlNotAccessible:
+      return "Mission Control is not accessible"
+    case .spaceNotFound(let number):
+      return "Desktop \(number) not found"
+    }
+  }
 }
 
 public class WindowManager {
@@ -110,7 +126,7 @@ public class WindowManager {
     _ = targetWindow.raise()
   }
 
-  func createNewWindowViaMenu(for app: AXUIElement) -> Bool {
+  public func createNewWindowViaMenu(for app: AXUIElement) -> Bool {
     // Get menu bar element
     var menuBar: AnyObject?
     guard AXUIElementCopyAttributeValue(app, kAXMenuBarAttribute as CFString, &menuBar) == .success,
@@ -182,15 +198,170 @@ public class WindowManager {
   }
 
   public func switchToDesktop(number: Int) throws {
-    guard (1...9).contains(number) else {
+    guard number >= 1 else {
       throw DesktopError.invalidDesktopNumber
     }
 
-    // Simulate pressing the number key for the desired desktop
-    let desktopKeyCode = CGKeyCode(0x12 + (number - 1))  // 0x12 is '1' key
-    KeyboardSimulator.simulateKeyPress(keyCode: desktopKeyCode, flags: .maskControl)
+    // Use Mission Control UI automation via Dock's accessibility API
+    // This approach doesn't require keyboard shortcuts to be enabled
+
+    // Get Dock app
+    guard let dockApp = NSRunningApplication.runningApplications(
+      withBundleIdentifier: "com.apple.dock"
+    ).first else {
+      throw DesktopError.dockNotFound
+    }
+
+    let dockAx = AXUIElementCreateApplication(dockApp.processIdentifier)
+
+    // Check if Mission Control is already open by looking for its group
+    var missionControlWasOpen = false
+    if let _ = getMissionControlGroup(dockAx: dockAx) {
+      missionControlWasOpen = true
+    }
+
+    // Open Mission Control if not already open
+    if !missionControlWasOpen {
+      // Use the open command to launch Mission Control
+      let task = Process()
+      task.launchPath = "/usr/bin/open"
+      task.arguments = ["-a", "Mission Control"]
+      try? task.run()
+      task.waitUntilExit()
+
+      // Wait for Mission Control to fully open
+      usleep(500_000)  // 500ms
+    }
+
+    // Find the spaces list in Mission Control
+    guard let spaceButton = findSpaceButton(in: dockAx, targetSpace: number) else {
+      // Close Mission Control by pressing Escape
+      KeyboardSimulator.simulateKeyPress(keyCode: 53, flags: CGEventFlags(rawValue: 0))
+      throw DesktopError.spaceNotFound(number)
+    }
+
+    // Press the space button
+    AXUIElementPerformAction(spaceButton, kAXPressAction as CFString)
 
     print("Switched to desktop \(number)")
+  }
+
+  private func getMissionControlGroup(dockAx: AXUIElement) -> AXUIElement? {
+    var childrenValue: AnyObject?
+    guard AXUIElementCopyAttributeValue(dockAx, kAXChildrenAttribute as CFString, &childrenValue) == .success,
+          let children = childrenValue as? [AXUIElement]
+    else {
+      return nil
+    }
+
+    // Look for the Mission Control group (it's a group child of Dock when MC is open)
+    for child in children {
+      var roleValue: AnyObject?
+      AXUIElementCopyAttributeValue(child, kAXRoleAttribute as CFString, &roleValue)
+      let role = roleValue as? String
+
+      if role == "AXGroup" {
+        // Check if this is the Mission Control group by looking for its identifier
+        var identifierValue: AnyObject?
+        AXUIElementCopyAttributeValue(child, kAXIdentifierAttribute as CFString, &identifierValue)
+        let identifier = identifierValue as? String
+
+        if identifier == "mc" {
+          return child
+        }
+
+        // Also check children count - MC group typically has children
+        var mcChildrenValue: AnyObject?
+        if AXUIElementCopyAttributeValue(child, kAXChildrenAttribute as CFString, &mcChildrenValue) == .success,
+           let mcChildren = mcChildrenValue as? [AXUIElement],
+           !mcChildren.isEmpty {
+          return child
+        }
+      }
+    }
+
+    return nil
+  }
+
+  private func findSpaceButton(in dockAx: AXUIElement, targetSpace: Int) -> AXUIElement? {
+    // Navigate the Mission Control hierarchy:
+    // Dock -> mc (Mission Control group) -> mc.display -> mc.spaces -> mc.spaces.list -> buttons
+
+    // Step 1: Find the Mission Control group (identifier: "mc")
+    guard let mcGroup = findChildWithIdentifier(in: dockAx, identifier: "mc") else {
+      return nil
+    }
+
+    // Step 2: Find the display group (identifier: "mc.display")
+    // There may be multiple displays, we'll use the first one
+    guard let displayGroup = findChildWithIdentifier(in: mcGroup, identifier: "mc.display") else {
+      return nil
+    }
+
+    // Step 3: Find the spaces container (identifier: "mc.spaces")
+    guard let spacesContainer = findChildWithIdentifier(in: displayGroup, identifier: "mc.spaces") else {
+      return nil
+    }
+
+    // Step 4: Find the spaces list (identifier: "mc.spaces.list")
+    guard let spacesList = findChildWithIdentifier(in: spacesContainer, identifier: "mc.spaces.list") else {
+      return nil
+    }
+
+    // Step 5: Get the space buttons from the list
+    var listChildrenValue: AnyObject?
+    guard AXUIElementCopyAttributeValue(spacesList, kAXChildrenAttribute as CFString, &listChildrenValue) == .success,
+          let listChildren = listChildrenValue as? [AXUIElement]
+    else {
+      return nil
+    }
+
+    // Filter to only include actual space buttons (not the add button)
+    // Space buttons are numbered 1, 2, 3, etc. from left to right
+    var spaceButtons: [AXUIElement] = []
+    for child in listChildren {
+      var identifierValue: AnyObject?
+      AXUIElementCopyAttributeValue(child, kAXIdentifierAttribute as CFString, &identifierValue)
+      let identifier = identifierValue as? String ?? ""
+
+      // Space buttons typically have identifier like "mc.spaces.list.N" or similar
+      // They are buttons that are NOT the add button
+      var roleValue: AnyObject?
+      AXUIElementCopyAttributeValue(child, kAXRoleAttribute as CFString, &roleValue)
+      let role = roleValue as? String
+
+      if role == "AXButton" && !identifier.contains("add") {
+        spaceButtons.append(child)
+      }
+    }
+
+    // Return the target space (1-indexed)
+    guard targetSpace >= 1 && targetSpace <= spaceButtons.count else {
+      return nil
+    }
+
+    return spaceButtons[targetSpace - 1]
+  }
+
+  private func findChildWithIdentifier(in element: AXUIElement, identifier: String) -> AXUIElement? {
+    var childrenValue: AnyObject?
+    guard AXUIElementCopyAttributeValue(element, kAXChildrenAttribute as CFString, &childrenValue) == .success,
+          let children = childrenValue as? [AXUIElement]
+    else {
+      return nil
+    }
+
+    for child in children {
+      var identifierValue: AnyObject?
+      AXUIElementCopyAttributeValue(child, kAXIdentifierAttribute as CFString, &identifierValue)
+      let childIdentifier = identifierValue as? String
+
+      if childIdentifier == identifier {
+        return child
+      }
+    }
+
+    return nil
   }
 
   private func getLocalizedString(key: String, tableName: String) -> String {
