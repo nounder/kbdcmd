@@ -101,6 +101,7 @@ private struct WalkerNode {
   let bounds: CGRect?
   let actions: [String]
   let hasChildren: Bool
+  let selected: Bool
 }
 
 enum OutputFormat: String, ExpressibleByArgument, CaseIterable {
@@ -158,7 +159,7 @@ struct TreeCommand: AsyncParsableCommand {
   @Flag(name: .customLong("collapse-title"), inversion: .prefixedNo, help: "Hide description if same as title (default: on)")
   var collapseTitle: Bool = true
 
-  @Flag(name: .customLong("inline-text"), inversion: .prefixedNo, help: "Render AXStaticText as text nodes (default: on)")
+  @Flag(name: .customLong("inline-text"), inversion: .prefixedNo, help: "Render AXStaticText as quoted text nodes, concatenating consecutive text at same depth (default: on)")
   var inlineText: Bool = true
 
   @Flag(name: .customLong("scrollbar"), inversion: .prefixedNo, help: "Include scroll bar elements (default: off)")
@@ -167,8 +168,8 @@ struct TreeCommand: AsyncParsableCommand {
   @Flag(inversion: .prefixedNo, help: "Include available actions (default: on)")
   var action: Bool = true
 
-  @Option(name: .long, help: "Include actions matching pattern (glob: 'AX*', list: 'AXPress,AXScroll')")
-  var actionP: String?
+  @Option(name: .long, help: "Include actions matching pattern (glob: 'AX*', list: 'AXPress,AXScroll'). Default: 'AXPress,AXConfirm'")
+  var actionP: String = "AXPress,AXConfirm"
 
   @Flag(name: .long, help: "Include action descriptions as values")
   var actionDesc: Bool = false
@@ -194,14 +195,8 @@ struct TreeCommand: AsyncParsableCommand {
       throw ValidationError("--cgid, --app, --title, and --pid are mutually exclusive")
     }
 
-    if action && actionP != nil {
-      throw ValidationError("--action and --action-p are mutually exclusive")
-    }
-
-    let actionMatcher: ((String) -> Bool)? = if let pattern = actionP {
-      { self.matchesFilter($0, pattern: pattern) }
-    } else if action {
-      { _ in true }
+    let actionMatcher: ((String) -> Bool)? = if action {
+      { self.matchesFilter($0, pattern: self.actionP) }
     } else {
       nil
     }
@@ -268,39 +263,38 @@ struct TreeCommand: AsyncParsableCommand {
     registry: AXRegistry,
     actionMatcher: ((String) -> Bool)?
   ) -> [WalkerNode] {
-    var nodes: [WalkerNode] = []
-    var stack: [(element: AXUIElement, depth: Int, parentId: String?, siblingIndex: Int)] = [
-      (root, 0, nil, 0)
-    ]
+    let includeScrollbar = verbose || scrollbar
+    let includeTiny = verbose || tiny
+    let includeEmpty = verbose || empty
+    let visibleOnly = !(verbose || invisible)
 
-    while let (element, depth, parentId, siblingIndex) = stack.popLast() {
+    func buildNode(
+      element: AXUIElement,
+      depth: Int,
+      nodeId: String
+    ) -> (node: WalkerNode, hasMeaningfulContent: Bool)? {
       if let maxDepth = maxDepth, depth > maxDepth {
-        continue
+        return nil
       }
 
-      let nodeId = parentId.map { "\($0)-\(siblingIndex)" } ?? "#0"
       let rawRole = registry.getAttr(element, kAXRoleAttribute) as? String ?? "Unknown"
-      let visibleOnly = !(verbose || invisible)
-      let children = registry.getChildren(element, visibleOnly: visibleOnly)
-      let hasChildren = !children.isEmpty && (maxDepth == nil || depth < maxDepth!)
-
-      let includeScrollbar = verbose || scrollbar
-      let includeTiny = verbose || tiny
-      let includeEmpty = verbose || empty
 
       if !includeScrollbar && rawRole == "AXScrollBar" {
-        continue
+        return nil
       }
 
       if !includeTiny {
         if let b = registry.getBounds(element) {
           if b.width <= 5 || b.height <= 5 {
-            continue
+            return nil
           }
         } else {
-          continue
+          return nil
         }
       }
+
+      let children = registry.getChildren(element, visibleOnly: visibleOnly)
+      let hasChildren = !children.isEmpty && (maxDepth == nil || depth < maxDepth!)
 
       let title = registry.getAttr(element, kAXTitleAttribute) as? String
       let value = registry.getAttr(element, kAXValueAttribute) as? String
@@ -308,6 +302,7 @@ struct TreeCommand: AsyncParsableCommand {
       let rawRoleDescription = registry.getAttr(element, kAXRoleDescriptionAttribute) as? String
       let label = registry.getAttr(element, "AXLabel") as? String
       let elementBounds = bounds ? registry.getBounds(element) : nil
+      let selected = (registry.getAttr(element, kAXSelectedAttribute) as? Bool) ?? false
 
       let role: String
       let showRoleDescription: Bool
@@ -315,7 +310,7 @@ struct TreeCommand: AsyncParsableCommand {
         role = customTag
         showRoleDescription = false
       } else if roleTag, let rd = rawRoleDescription, !rd.isEmpty, rd.lowercased() != "unknown" {
-        role = hyphenize(rd)
+        role = simplifyRole(hyphenize(rd))
         showRoleDescription = false
       } else {
         if roleTag && rawRole == "Unknown" {
@@ -333,19 +328,14 @@ struct TreeCommand: AsyncParsableCommand {
         actions = []
       }
 
-      // Skip elements with no meaningful content (default behavior, use --empty or --verbose to include)
-      if !includeEmpty {
-        let hasTitle = title.map { !$0.trimmingCharacters(in: .whitespaces).isEmpty } ?? false
-        let hasValue = value.map { !$0.trimmingCharacters(in: .whitespaces).isEmpty } ?? false
-        let hasDesc = description.map { !$0.trimmingCharacters(in: .whitespaces).isEmpty } ?? false
-        let hasLabel = label.map { !$0.trimmingCharacters(in: .whitespaces).isEmpty } ?? false
-        let hasRoleDesc = rawRoleDescription != nil && !rawRoleDescription!.isEmpty && rawRoleDescription!.lowercased() != "unknown"
-        let hasActions = !actions.isEmpty
+      let hasTitle = title.map { !$0.trimmingCharacters(in: .whitespaces).isEmpty } ?? false
+      let hasValue = value.map { !$0.trimmingCharacters(in: .whitespaces).isEmpty } ?? false
+      let hasDesc = description.map { !$0.trimmingCharacters(in: .whitespaces).isEmpty } ?? false
+      let hasLabel = label.map { !$0.trimmingCharacters(in: .whitespaces).isEmpty } ?? false
+      let hasRoleDesc = showRoleDescription
+      let hasActions = !actions.isEmpty
 
-        if !hasTitle && !hasValue && !hasDesc && !hasLabel && !hasRoleDesc && !hasActions {
-          continue
-        }
-      }
+      let hasMeaningfulContent = hasTitle || hasValue || hasDesc || hasLabel || hasRoleDesc || hasActions
 
       let node = WalkerNode(
         role: role,
@@ -359,28 +349,79 @@ struct TreeCommand: AsyncParsableCommand {
         label: label,
         bounds: elementBounds,
         actions: actions,
-        hasChildren: hasChildren
+        hasChildren: hasChildren,
+        selected: selected
       )
-      nodes.append(node)
 
-      for (index, child) in children.enumerated().reversed() {
-        stack.append((child, depth + 1, nodeId, index))
+      return (node, hasMeaningfulContent)
+    }
+
+    func traverseRecursive(
+      element: AXUIElement,
+      depth: Int,
+      nodeId: String
+    ) -> (nodes: [WalkerNode], hasMeaningfulDescendant: Bool) {
+      guard let (node, hasMeaningfulContent) = buildNode(element: element, depth: depth, nodeId: nodeId) else {
+        return ([], false)
+      }
+
+      let children = registry.getChildren(element, visibleOnly: visibleOnly)
+      var childNodes: [WalkerNode] = []
+      var anyChildHasMeaningful = false
+
+      for (index, child) in children.enumerated() {
+        let childId = "\(nodeId)-\(index)"
+        let (descendantNodes, hasMeaningful) = traverseRecursive(element: child, depth: depth + 1, nodeId: childId)
+        childNodes.append(contentsOf: descendantNodes)
+        if hasMeaningful {
+          anyChildHasMeaningful = true
+        }
+      }
+
+      let shouldInclude = includeEmpty || hasMeaningfulContent || anyChildHasMeaningful
+
+      if shouldInclude {
+        return ([node] + childNodes, hasMeaningfulContent || anyChildHasMeaningful)
+      } else {
+        return ([], false)
       }
     }
 
+    let (nodes, _) = traverseRecursive(element: root, depth: 0, nodeId: "#0")
     return nodes
   }
 
   private func printIndentFormat(nodes: [WalkerNode], actionMatcher: ((String) -> Bool)?) {
+    var pendingTexts: [String] = []
+    var pendingDepth: Int = 0
+
+    func flushPendingTexts() {
+      if !pendingTexts.isEmpty {
+        let indent = String(repeating: "  ", count: pendingDepth)
+        print("\(indent)\"\(pendingTexts.joined(separator: " "))\"")
+        pendingTexts.removeAll()
+      }
+    }
+
     for node in nodes {
-      if inlineText && node.rawRole == "AXStaticText" {
+      if inlineText && node.rawRole == "AXStaticText" && node.actions.isEmpty {
         let textContent = node.value ?? node.title ?? ""
         if !textContent.isEmpty {
-          let indent = String(repeating: "  ", count: node.depth)
-          print("\(indent)\(textContent)")
+          if pendingTexts.isEmpty {
+            pendingDepth = node.depth
+            pendingTexts.append(textContent)
+          } else if node.depth == pendingDepth {
+            pendingTexts.append(textContent)
+          } else {
+            flushPendingTexts()
+            pendingDepth = node.depth
+            pendingTexts.append(textContent)
+          }
         }
         continue
       }
+
+      flushPendingTexts()
 
       let indent = String(repeating: "  ", count: node.depth)
       var parts: [String] = [node.role.uppercased()]
@@ -443,6 +484,10 @@ struct TreeCommand: AsyncParsableCommand {
         parts.append("id=\"\(node.nodeId)\"")
       }
 
+      if node.selected {
+        parts.append("selected=true")
+      }
+
       // Actions as attributes (e.g., on:AXPress)
       for action in node.actions {
         parts.append("on:\(action)")
@@ -454,6 +499,8 @@ struct TreeCommand: AsyncParsableCommand {
 
       print("\(indent)\(parts.joined(separator: " "))")
     }
+
+    flushPendingTexts()
   }
 
   private func printXmlFormat(nodes: [WalkerNode], actionMatcher: ((String) -> Bool)?) {
@@ -467,7 +514,7 @@ struct TreeCommand: AsyncParsableCommand {
 
       let indent = String(repeating: "  ", count: node.depth)
 
-      if inlineText && node.rawRole == "AXStaticText" {
+      if inlineText && node.rawRole == "AXStaticText" && node.actions.isEmpty {
         let textContent = node.value ?? node.title ?? ""
         if !textContent.isEmpty {
           print("\(indent)\(escapeAttribute(textContent))")
@@ -503,6 +550,10 @@ struct TreeCommand: AsyncParsableCommand {
       if let label = node.label, !label.isEmpty {
         if !attrs.isEmpty { attrs += " " }
         attrs += "label=\"\(truncate(escapeAttribute(label)))\""
+      }
+      if node.selected {
+        if !attrs.isEmpty { attrs += " " }
+        attrs += "selected=true"
       }
       for actionName in node.actions {
         if !attrs.isEmpty { attrs += " " }
@@ -764,6 +815,18 @@ struct TreeCommand: AsyncParsableCommand {
 
   private func hyphenize(_ string: String) -> String {
     string.replacingOccurrences(of: " ", with: "-")
+  }
+
+  private func simplifyRole(_ role: String) -> String {
+    let lowercased = role.lowercased()
+    switch lowercased {
+    case "outline-row", "table-row":
+      return "row"
+    case "toggle-button":
+      return "button"
+    default:
+      return role
+    }
   }
 
   private var tagMap: [String: String] {

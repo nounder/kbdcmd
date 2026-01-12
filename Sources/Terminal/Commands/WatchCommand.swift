@@ -39,6 +39,9 @@ struct WatchCommand: AsyncParsableCommand {
   @Flag(name: .long, help: "Include element details in output")
   var verbose: Bool = false
 
+  @Option(name: .shortAndLong, help: "Filter by app name (shorthand for app=<value>)")
+  var app: [String] = []
+
   @Option(name: .shortAndLong, help: "Filter output with logfmt-style queries (e.g., app=Music role!=AXStaticText)")
   var query: [String] = []
 
@@ -58,7 +61,9 @@ struct WatchCommand: AsyncParsableCommand {
   func run() async throws {
     try Permissions.checkAccessibility()
 
-    let queryFilter = try query.isEmpty ? nil : QueryFilter(conditions: query)
+    // Combine --app values with --query values
+    let allConditions = app.map { "app=\($0)" } + query
+    let queryFilter = try allConditions.isEmpty ? nil : QueryFilter(conditions: allConditions)
     let untilFilter = try until.isEmpty ? nil : QueryFilter(conditions: until)
 
     // Parse fields: support both "-f time,app" and "-f time -f app"

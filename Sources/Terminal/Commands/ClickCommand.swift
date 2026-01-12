@@ -33,16 +33,15 @@ struct ClickCommand: AsyncParsableCommand {
 
   @MainActor
   func run() async throws {
-    var cmd = PerformCommand()
-    cmd.operation = "click"
-    cmd.operands = operands
-    cmd.app = app
-    cmd.title = title
-    cmd.pid = pid
-    cmd.cgid = cgid
-    cmd.debug = debug
-    cmd.walk = walk
-    cmd.double = double
+    var args = ["click"] + operands
+    if let app = app { args += ["--app", app] }
+    if let title = title { args += ["--title", title] }
+    if let pid = pid { args += ["--pid", String(pid)] }
+    if let cgid = cgid { args += ["--cgid", String(cgid)] }
+    if debug { args += ["--debug"] }
+    if walk { args += ["--walk"] }
+    if double { args += ["--double"] }
+    let cmd = try PerformCommand.parse(args)
     try await cmd.run()
   }
 }
@@ -67,12 +66,13 @@ struct TypeCommand: AsyncParsableCommand {
 
   @MainActor
   func run() async throws {
-    var cmd = PerformCommand()
-    cmd.operation = "type"
-    cmd.operands = operands
-    cmd.delay = delay
-    cmd.wait = wait
-    cmd.clear = clear
+    var args = ["type"] + operands
+    args += ["--delay", String(delay)]
+    args += ["--wait", String(wait)]
+    if clear {
+      args += ["--clear"]
+    }
+    let cmd = try PerformCommand.parse(args)
     try await cmd.run()
   }
 }

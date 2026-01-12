@@ -29,6 +29,9 @@ struct PerformCommand: AsyncParsableCommand {
         kbdcmd perform type "<cmd-c>" "<cmd-v>"           # Copy and paste
         kbdcmd perform key return                         # Press Enter/Return key
         kbdcmd perform key tab                            # Press Tab key
+        kbdcmd perform --menu "New Window"                # Perform menu action by name
+        kbdcmd perform --menu "Shell > New Window"        # Perform menu action by path
+        kbdcmd perform --menu "Quit" --app Finder         # Perform menu action in specific app
 
       Coordinates require @ prefix: @x,y or @x,y,w,h (bounds, clicks center).
       Type operation supports chords (<modifier-key>) and plain text.
@@ -72,9 +75,18 @@ struct PerformCommand: AsyncParsableCommand {
   @Flag(name: .long, help: "Clear input field before typing (select all + delete)")
   var clear: Bool = false
 
+  @Option(name: .long, help: "Perform menu item action by name (e.g., \"New Window\" or \"File > New Window\")")
+  var menu: String?
+
   @MainActor
   func run() async throws {
     try Permissions.checkAccessibility()
+
+    // Handle --menu option (standalone, doesn't require operation)
+    if let menuPath = menu {
+      try performMenuAction(menuPath)
+      return
+    }
 
     // Validate filter exclusivity
     let filterCount = [app != nil, title != nil, pid != nil, cgid != nil].filter { $0 }.count
@@ -339,6 +351,191 @@ struct PerformCommand: AsyncParsableCommand {
     }
 
     print("Moved to (\(Int(x)),\(Int(y)))")
+  }
+
+  private func performMenuAction(_ menuPath: String) throws {
+    // Parse menu path: "File > New Window" or just "New Window"
+    let components = menuPath.split(separator: ">").map { $0.trimmingCharacters(in: .whitespaces) }
+
+    // Get the target app
+    let targetApp: NSRunningApplication
+    if let appFilter = app {
+      try ensureAppFrontmost(appFilter)
+      guard let foundApp = NSWorkspace.shared.runningApplications.first(where: { app in
+        guard let name = app.localizedName, app.activationPolicy == .regular else { return false }
+        return name.localizedCaseInsensitiveContains(appFilter) ||
+               (app.bundleIdentifier?.localizedCaseInsensitiveContains(appFilter) ?? false)
+      }) else {
+        throw ValidationError("No app found matching '\(appFilter)'")
+      }
+      targetApp = foundApp
+    } else {
+      guard let frontmost = NSWorkspace.shared.frontmostApplication else {
+        throw ValidationError("No frontmost application")
+      }
+      targetApp = frontmost
+    }
+
+    let axApp = AXUIElementCreateApplication(targetApp.processIdentifier)
+
+    // Get the menu bar
+    var menuBarRef: AnyObject?
+    guard AXUIElementCopyAttributeValue(axApp, kAXMenuBarAttribute as CFString, &menuBarRef) == .success,
+          let menuBar = menuBarRef else {
+      throw ValidationError("Could not access menu bar for '\(targetApp.localizedName ?? "app")'")
+    }
+
+    let menuBarElement = menuBar as! AXUIElement
+
+    // Get menu bar items (top-level menus like File, Edit, etc.)
+    var menuBarItemsRef: AnyObject?
+    guard AXUIElementCopyAttributeValue(menuBarElement, kAXChildrenAttribute as CFString, &menuBarItemsRef) == .success,
+          let menuBarItems = menuBarItemsRef as? [AXUIElement] else {
+      throw ValidationError("Could not get menu bar items")
+    }
+
+    // Find the menu item
+    let menuItem: AXUIElement?
+
+    if components.count == 1 {
+      // Search all menus for the item
+      menuItem = findMenuItemByName(components[0], in: menuBarItems)
+    } else {
+      // Navigate through the menu path
+      menuItem = findMenuItemByPath(components, in: menuBarItems)
+    }
+
+    guard let item = menuItem else {
+      throw ValidationError("Menu item '\(menuPath)' not found")
+    }
+
+    // Check if enabled
+    var enabledRef: AnyObject?
+    if AXUIElementCopyAttributeValue(item, kAXEnabledAttribute as CFString, &enabledRef) == .success,
+       let enabled = enabledRef as? Bool, !enabled {
+      throw ValidationError("Menu item '\(menuPath)' is disabled")
+    }
+
+    // Perform AXPress on the menu item
+    let result = AXUIElementPerformAction(item, kAXPressAction as CFString)
+    if result != .success {
+      throw ValidationError("Failed to perform menu action '\(menuPath)': error \(result.rawValue)")
+    }
+
+    print("Performed menu action: \(menuPath)")
+  }
+
+  private func findMenuItemByName(_ name: String, in menuBarItems: [AXUIElement]) -> AXUIElement? {
+    // Skip the Apple menu (first item) and search through all menus
+    for menuBarItem in menuBarItems {
+      // Get the menu for this menu bar item
+      var menuRef: AnyObject?
+      guard AXUIElementCopyAttributeValue(menuBarItem, kAXChildrenAttribute as CFString, &menuRef) == .success,
+            let menus = menuRef as? [AXUIElement],
+            let menu = menus.first else {
+        continue
+      }
+
+      // Search this menu's items
+      if let found = searchMenuForItem(name, in: menu) {
+        return found
+      }
+    }
+    return nil
+  }
+
+  private func searchMenuForItem(_ name: String, in menu: AXUIElement) -> AXUIElement? {
+    var childrenRef: AnyObject?
+    guard AXUIElementCopyAttributeValue(menu, kAXChildrenAttribute as CFString, &childrenRef) == .success,
+          let children = childrenRef as? [AXUIElement] else {
+      return nil
+    }
+
+    for child in children {
+      // Get the title
+      var titleRef: AnyObject?
+      if AXUIElementCopyAttributeValue(child, kAXTitleAttribute as CFString, &titleRef) == .success,
+         let title = titleRef as? String {
+        if title.localizedCaseInsensitiveCompare(name) == .orderedSame {
+          return child
+        }
+      }
+
+      // Check for submenu
+      var submenuRef: AnyObject?
+      if AXUIElementCopyAttributeValue(child, kAXChildrenAttribute as CFString, &submenuRef) == .success,
+         let submenus = submenuRef as? [AXUIElement],
+         let submenu = submenus.first {
+        if let found = searchMenuForItem(name, in: submenu) {
+          return found
+        }
+      }
+    }
+    return nil
+  }
+
+  private func findMenuItemByPath(_ components: [String], in menuBarItems: [AXUIElement]) -> AXUIElement? {
+    guard !components.isEmpty else { return nil }
+
+    let menuName = components[0]
+
+    // Find the top-level menu
+    for menuBarItem in menuBarItems {
+      var titleRef: AnyObject?
+      if AXUIElementCopyAttributeValue(menuBarItem, kAXTitleAttribute as CFString, &titleRef) == .success,
+         let title = titleRef as? String,
+         title.localizedCaseInsensitiveCompare(menuName) == .orderedSame {
+
+        // Get the menu
+        var menuRef: AnyObject?
+        guard AXUIElementCopyAttributeValue(menuBarItem, kAXChildrenAttribute as CFString, &menuRef) == .success,
+              let menus = menuRef as? [AXUIElement],
+              let menu = menus.first else {
+          return nil
+        }
+
+        if components.count == 1 {
+          return menuBarItem
+        }
+
+        // Navigate the remaining path
+        return navigateMenuPath(Array(components.dropFirst()), in: menu)
+      }
+    }
+    return nil
+  }
+
+  private func navigateMenuPath(_ components: [String], in menu: AXUIElement) -> AXUIElement? {
+    guard !components.isEmpty else { return nil }
+
+    var childrenRef: AnyObject?
+    guard AXUIElementCopyAttributeValue(menu, kAXChildrenAttribute as CFString, &childrenRef) == .success,
+          let children = childrenRef as? [AXUIElement] else {
+      return nil
+    }
+
+    let targetName = components[0]
+
+    for child in children {
+      var titleRef: AnyObject?
+      if AXUIElementCopyAttributeValue(child, kAXTitleAttribute as CFString, &titleRef) == .success,
+         let title = titleRef as? String,
+         title.localizedCaseInsensitiveCompare(targetName) == .orderedSame {
+
+        if components.count == 1 {
+          return child
+        }
+
+        // Navigate into submenu
+        var submenuRef: AnyObject?
+        if AXUIElementCopyAttributeValue(child, kAXChildrenAttribute as CFString, &submenuRef) == .success,
+           let submenus = submenuRef as? [AXUIElement],
+           let submenu = submenus.first {
+          return navigateMenuPath(Array(components.dropFirst()), in: submenu)
+        }
+      }
+    }
+    return nil
   }
 
   private func parseCoordinates(_ coords: String) throws -> (point: CGPoint, targetBounds: CGRect?) {
