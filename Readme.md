@@ -19,7 +19,7 @@ After you enable Permissions, as prompted on startup, open "Kbdcmd" app Applicat
 
 <kbd>right command</kbd> + <kbd>`</kbd> to assign a key to an app.
 
-<kbd>right command</kbd> + <kbd>shift</kbd> + </kd> + <kbd>`</kbd> to assign a key to an app.
+<kbd>right command</kbd> + <kbd>shift</kbd> + <kbd>`</kbd> to assign a key to a window.
 
 <kbd>right command</kbd> + <kbd>[key]</kbd> to focus or cycle through the apps under a `[key]`.
 

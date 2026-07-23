@@ -1,14 +1,18 @@
+.PHONY: build build-cli install setup clean reset-permissions
+
 build:
 	./bundle.sh
 
 build-cli:
-	make setup && swift build -c release --product kbdcmd && cp .build/release/kbdcmd $${HOME}/bin/kbdcmd
+	swift build -c release --product kbdcmd
+	mkdir -p $${HOME}/bin
+	cp .build/release/kbdcmd $${HOME}/bin/kbdcmd
 
-install:
-	make build && cp -r .build/Kbdcmd.app /Applications/
+install: build
+	cp -r .build/Kbdcmd.app /Applications/
 
-setup:
-	make reset-permissions && make install && open /Applications/Kbdcmd.app
+setup: install
+	open /Applications/Kbdcmd.app
 
 clean:
 	swift package clean

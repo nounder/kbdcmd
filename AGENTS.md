@@ -3,19 +3,17 @@
 ## Build/Test Commands
 
 ### CLI Tool
-- `make build` or `make build-cli` - Build release binary and install to ~/bin/kbdcmd
-- `make debug` - Build debug binary and install to ~/bin/kbdcmd-debug  
-- `swift build --product kbdcmd` - Build CLI tool
+- `make build-cli` - Build release binary and install to ~/bin/kbdcmd
+- `swift build --product kbdcmd` - Build CLI tool (debug, to .build/debug/kbdcmd)
 
 ### Menu Bar App (macOS .app bundle)
-- `make install-app` - Build and install Kbdcmd.app to /Applications (recommended)
-- `make build-app-bundle` - Build .app bundle to .build/Kbdcmd.app
-- `./build-app-bundle.sh` - Build script for creating app bundle
+- `make build` or `./bundle.sh` - Build .app bundle to .build/Kbdcmd.app (release; override with TARGET=debug)
+- `make install` - Build and copy Kbdcmd.app to /Applications
+- `make setup` - Install and open the app
 - `swift build --product kbdcmd-app` - Build executable only (not full .app)
 
-### All Targets
-- `make build-all` - Build both CLI and app
-- `make dev` - Auto-rebuild on file changes using entr
+### Other
+- `make reset-permissions` - Reset the app's Accessibility grant (never runs implicitly)
 - `swift build` - Build all targets
 - `swift build -c release` - Release build all targets
 - No test suite currently exists
@@ -53,7 +51,7 @@ The project is organized into three main targets:
 - Terminal CLI: `Sources/Terminal/Kbdcmd.swift` - ArgumentParser-based CLI
 - Desktop App: `Sources/Desktop/App.swift` - SwiftUI App with NSApplicationDelegate
 
-## Code Style (from .cursorrules)
+## Code Style
 - Swift/SwiftUI focused with latest language features
 - Prioritize readability over performance
 - No TODOs or placeholders in committed code
