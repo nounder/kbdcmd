@@ -4,10 +4,6 @@ import ArgumentParser
 import Core
 import Foundation
 
-@_silgen_name("_AXUIElementGetWindow")
-@discardableResult
-func _AXUIElementGetWindow(_ axUiElement: AXUIElement, _ id: inout CGWindowID) -> AXError
-
 private final class AXRegistry {
   private var actionsCache: [ObjectIdentifier: [String]] = [:]
   private var boundsCache: [ObjectIdentifier: CGRect?] = [:]
@@ -204,22 +200,22 @@ struct TreeCommand: AsyncParsableCommand {
     let root: AXUIElement
 
     if let cgid = cgid {
-      guard let window = findWindowByCGID(CGWindowID(cgid)) else {
+      guard let window = WindowFinder.findWindowAndApp(cgid: CGWindowID(cgid))?.window else {
         throw ValidationError("No window found with cgid \(cgid)")
       }
       root = window
     } else if let app = app {
-      guard let window = findWindowByApp(app) else {
+      guard let window = WindowFinder.findWindowAndApp(app: app)?.window else {
         throw ValidationError("No window found for app '\(app)'")
       }
       root = window
     } else if let title = title {
-      guard let window = findWindowByTitle(title) else {
+      guard let window = WindowFinder.findWindowAndApp(title: title)?.window else {
         throw ValidationError("No window found with title '\(title)'")
       }
       root = window
     } else if let pid = pid {
-      guard let window = findWindowByPid(pid) else {
+      guard let window = WindowFinder.findWindowAndApp(pid: pid)?.window else {
         throw ValidationError("No window found for pid \(pid)")
       }
       root = window
@@ -574,205 +570,6 @@ struct TreeCommand: AsyncParsableCommand {
     while let last = openTags.popLast() {
       print("\(String(repeating: "  ", count: last.depth))</\(escapeAttribute(last.role))>")
     }
-  }
-
-  private func findWindowByApp(_ appFilter: String) -> AXUIElement? {
-    let runningApps = NSWorkspace.shared.runningApplications
-
-    for app in runningApps {
-      guard let appName = app.localizedName,
-            app.activationPolicy == .regular
-      else {
-        continue
-      }
-
-      let appNameMatches = appName.localizedCaseInsensitiveContains(appFilter)
-      let bundleIdMatches = app.bundleIdentifier?.localizedCaseInsensitiveContains(appFilter) ?? false
-
-      if !appNameMatches && !bundleIdMatches {
-        continue
-      }
-
-      let axApp = AXUIElementCreateApplication(app.processIdentifier)
-
-      guard let axWindows = axApp.get(Ax.windowsAttr) else {
-        continue
-      }
-
-      for axWindow in axWindows {
-        guard axWindow.containingWindowId() != nil else {
-          continue
-        }
-
-        let role = axWindow.get(Ax.roleAttr)
-        if let role = role, role != "AXWindow" {
-          continue
-        }
-
-        let subrole = axWindow.get(Ax.subroleAttr)
-        if let subrole = subrole {
-          let excludedSubroles = ["AXSystemDialog", "AXDialog", "AXUnknown"]
-          if excludedSubroles.contains(subrole) {
-            continue
-          }
-        }
-
-        let size = axWindow.get(Ax.sizeAttr)
-        guard let size = size else {
-          continue
-        }
-
-        if size.width < 100 || size.height < 100 {
-          continue
-        }
-
-        let windowTitle = axWindow.get(Ax.titleAttr) ?? ""
-        let isMinimized = axWindow.get(Ax.minimizedAttr) ?? false
-
-        if isMinimized {
-          continue
-        }
-
-        if windowTitle.isEmpty && !isMinimized {
-          continue
-        }
-
-        return axWindow
-      }
-    }
-    return nil
-  }
-
-  private func findWindowByCGID(_ targetCGID: CGWindowID) -> AXUIElement? {
-    for app in NSWorkspace.shared.runningApplications {
-      guard app.activationPolicy == .regular else { continue }
-
-      let axApp = AXUIElementCreateApplication(app.processIdentifier)
-      var windowsRef: AnyObject?
-      guard AXUIElementCopyAttributeValue(axApp, kAXWindowsAttribute as CFString, &windowsRef) == .success,
-            let windows = windowsRef as? [AXUIElement] else {
-        continue
-      }
-
-      for window in windows {
-        var cgWindowId = CGWindowID()
-        if _AXUIElementGetWindow(window, &cgWindowId) == .success && cgWindowId == targetCGID {
-          return window
-        }
-      }
-    }
-    return nil
-  }
-
-  private func findWindowByTitle(_ titleFilter: String) -> AXUIElement? {
-    let runningApps = NSWorkspace.shared.runningApplications
-
-    for app in runningApps {
-      guard app.activationPolicy == .regular else {
-        continue
-      }
-
-      let axApp = AXUIElementCreateApplication(app.processIdentifier)
-
-      guard let axWindows = axApp.get(Ax.windowsAttr) else {
-        continue
-      }
-
-      for axWindow in axWindows {
-        guard axWindow.containingWindowId() != nil else {
-          continue
-        }
-
-        let role = axWindow.get(Ax.roleAttr)
-        if let role = role, role != "AXWindow" {
-          continue
-        }
-
-        let subrole = axWindow.get(Ax.subroleAttr)
-        if let subrole = subrole {
-          let excludedSubroles = ["AXSystemDialog", "AXDialog", "AXUnknown"]
-          if excludedSubroles.contains(subrole) {
-            continue
-          }
-        }
-
-        let size = axWindow.get(Ax.sizeAttr)
-        guard let size = size else {
-          continue
-        }
-
-        if size.width < 100 || size.height < 100 {
-          continue
-        }
-
-        let windowTitle = axWindow.get(Ax.titleAttr) ?? ""
-        let isMinimized = axWindow.get(Ax.minimizedAttr) ?? false
-
-        if isMinimized {
-          continue
-        }
-
-        if windowTitle.localizedCaseInsensitiveContains(titleFilter) {
-          return axWindow
-        }
-      }
-    }
-    return nil
-  }
-
-  private func findWindowByPid(_ pidFilter: pid_t) -> AXUIElement? {
-    guard let app = NSRunningApplication(processIdentifier: pidFilter),
-          app.activationPolicy == .regular else {
-      return nil
-    }
-
-    let axApp = AXUIElementCreateApplication(pidFilter)
-
-    guard let axWindows = axApp.get(Ax.windowsAttr) else {
-      return nil
-    }
-
-    for axWindow in axWindows {
-      guard axWindow.containingWindowId() != nil else {
-        continue
-      }
-
-      let role = axWindow.get(Ax.roleAttr)
-      if let role = role, role != "AXWindow" {
-        continue
-      }
-
-      let subrole = axWindow.get(Ax.subroleAttr)
-      if let subrole = subrole {
-        let excludedSubroles = ["AXSystemDialog", "AXDialog", "AXUnknown"]
-        if excludedSubroles.contains(subrole) {
-          continue
-        }
-      }
-
-      let size = axWindow.get(Ax.sizeAttr)
-      guard let size = size else {
-        continue
-      }
-
-      if size.width < 100 || size.height < 100 {
-        continue
-      }
-
-      let windowTitle = axWindow.get(Ax.titleAttr) ?? ""
-      let isMinimized = axWindow.get(Ax.minimizedAttr) ?? false
-
-      if isMinimized {
-        continue
-      }
-
-      if windowTitle.isEmpty && !isMinimized {
-        continue
-      }
-
-      return axWindow
-    }
-    return nil
   }
 
   private func getActionDescription(_ element: AXUIElement, _ action: String) -> String? {

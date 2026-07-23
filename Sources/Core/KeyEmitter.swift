@@ -295,6 +295,14 @@ public enum KeystrokeParser {
     "cmd": .cmd, "command": .cmd, "super": .cmd, "win": .cmd,
   ]
 
+  public static func specialKey(named name: String) -> Keystroke.Key? {
+    specialKeyMap[name.lowercased()]
+  }
+
+  public static var specialKeyNames: [String] {
+    specialKeyMap.keys.sorted()
+  }
+
   public static func parse(_ input: String) throws -> KeySequence.Item {
     guard !input.isEmpty else {
       throw ParseError.emptyInput

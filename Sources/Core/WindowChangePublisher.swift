@@ -190,44 +190,15 @@ class WindowChangePublisher: ObservableObject {
       }
 
       for axWindow in axWindows {
-        guard let windowId = axWindow.containingWindowId() else {
+        guard let windowId = axWindow.containingWindowId(),
+          WindowFinder.isStandardWindow(axWindow)
+        else {
           continue
         }
 
-        // Filter out non-interactive windows
-        let subrole = axWindow.get(Ax.subroleAttr)
-
-        // Skip utility windows, system dialogs, and other non-standard windows
-        if let subrole = subrole {
-          let excludedSubroles = [
-            "AXSystemDialog",
-            "AXDialog",
-            "AXUnknown",
-          ]
-          if excludedSubroles.contains(subrole) {
-            continue
-          }
-        }
-
-        // Get window role
-        let role = axWindow.get(Ax.roleAttr)
-
-        // Only include standard windows
-        if let role = role, role != "AXWindow" {
-          continue
-        }
-
-        // Get position and size
         let position = axWindow.get(Ax.topLeftCornerAttr)
-        let size = axWindow.get(Ax.sizeAttr)
 
-        // Check if window has a size (filter out invisible windows)
-        guard let size = size else {
-          continue
-        }
-
-        // Filter out very small windows (likely overlays or utility windows)
-        if size.width < 100 || size.height < 100 {
+        guard let size = axWindow.get(Ax.sizeAttr) else {
           continue
         }
 

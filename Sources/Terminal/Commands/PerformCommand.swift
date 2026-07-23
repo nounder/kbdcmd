@@ -5,10 +5,6 @@ import Carbon
 import Core
 import Foundation
 
-@_silgen_name("_AXUIElementGetWindow")
-@discardableResult
-func _AXUIElementGetWindow_Perform(_ axUiElement: AXUIElement, _ id: inout CGWindowID) -> AXError
-
 struct PerformCommand: AsyncParsableCommand {
   static let configuration = CommandConfiguration(
     commandName: "perform",
@@ -204,8 +200,7 @@ struct PerformCommand: AsyncParsableCommand {
     }
 
     // Get CGID before performing action (for --walk)
-    var windowCGID = CGWindowID()
-    _ = _AXUIElementGetWindow_Perform(root, &windowCGID)
+    let windowCGID = root.containingWindowId() ?? CGWindowID()
 
     // Perform the action
     let result = AXUIElementPerformAction(element, actionName as CFString)
@@ -231,43 +226,12 @@ struct PerformCommand: AsyncParsableCommand {
   }
 
   private func performKeyPress(_ keyName: String) throws {
-    guard let source = CGEventSource(stateID: .hidSystemState) else {
-      throw ValidationError("Failed to create event source")
-    }
-
-    // Map key names to key codes
-    let keyCodeMap: [String: CGKeyCode] = [
-      "return": 36, "enter": 36,
-      "tab": 48,
-      "space": 49,
-      "delete": 51, "backspace": 51,
-      "escape": 53, "esc": 53,
-      "up": 126,
-      "down": 125,
-      "left": 123,
-      "right": 124,
-      "home": 115,
-      "end": 119,
-      "pageup": 116,
-      "pagedown": 121,
-      "f1": 122, "f2": 120, "f3": 99, "f4": 118,
-      "f5": 96, "f6": 97, "f7": 98, "f8": 100,
-      "f9": 101, "f10": 109, "f11": 103, "f12": 111,
-    ]
-
-    guard let keyCode = keyCodeMap[keyName.lowercased()] else {
-      let validKeys = keyCodeMap.keys.sorted().joined(separator: ", ")
+    guard let key = KeystrokeParser.specialKey(named: keyName) else {
+      let validKeys = KeystrokeParser.specialKeyNames.joined(separator: ", ")
       throw ValidationError("Unknown key '\(keyName)'. Valid keys: \(validKeys)")
     }
 
-    guard let keyDown = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: true),
-          let keyUp = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: false) else {
-      throw ValidationError("Failed to create key event")
-    }
-
-    keyDown.post(tap: .cghidEventTap)
-    usleep(50000)
-    keyUp.post(tap: .cghidEventTap)
+    try KeyEmitter.emit(Keystroke(key))
 
     print("Pressed: \(keyName)")
   }
@@ -639,218 +603,19 @@ struct PerformCommand: AsyncParsableCommand {
   }
 
   private func findWindowByApp(_ appFilter: String) -> AXUIElement? {
-    return findWindowAndAppByFilter(appFilter)?.0
+    return WindowFinder.findWindowAndApp(app: appFilter)?.window
   }
 
   private func findWindowByTitle(_ titleFilter: String) -> AXUIElement? {
-    return findWindowAndAppByTitle(titleFilter)?.0
+    return WindowFinder.findWindowAndApp(title: titleFilter)?.window
   }
 
   private func findWindowByPid(_ pidFilter: pid_t) -> AXUIElement? {
-    return findWindowAndAppByPid(pidFilter)?.0
+    return WindowFinder.findWindowAndApp(pid: pidFilter)?.window
   }
 
   private func findWindowByCGID(_ targetCGID: CGWindowID) -> AXUIElement? {
-    return findWindowAndAppByCGID(targetCGID)?.0
-  }
-
-  private func findWindowAndAppByFilter(_ appFilter: String) -> (AXUIElement, NSRunningApplication)? {
-    let runningApps = NSWorkspace.shared.runningApplications
-
-    for app in runningApps {
-      guard let appName = app.localizedName,
-            app.activationPolicy == .regular
-      else {
-        continue
-      }
-
-      let appNameMatches = appName.localizedCaseInsensitiveContains(appFilter)
-      let bundleIdMatches = app.bundleIdentifier?.localizedCaseInsensitiveContains(appFilter) ?? false
-
-      if !appNameMatches && !bundleIdMatches {
-        continue
-      }
-
-      let axApp = AXUIElementCreateApplication(app.processIdentifier)
-
-      guard let axWindows = axApp.get(Ax.windowsAttr) else {
-        continue
-      }
-
-      for axWindow in axWindows {
-        guard axWindow.containingWindowId() != nil else {
-          continue
-        }
-
-        let role = axWindow.get(Ax.roleAttr)
-        if let role = role, role != "AXWindow" {
-          continue
-        }
-
-        let subrole = axWindow.get(Ax.subroleAttr)
-        if let subrole = subrole {
-          let excludedSubroles = ["AXSystemDialog", "AXDialog", "AXUnknown"]
-          if excludedSubroles.contains(subrole) {
-            continue
-          }
-        }
-
-        let size = axWindow.get(Ax.sizeAttr)
-        guard let size = size else {
-          continue
-        }
-
-        if size.width < 100 || size.height < 100 {
-          continue
-        }
-
-        let windowTitle = axWindow.get(Ax.titleAttr) ?? ""
-        let isMinimized = axWindow.get(Ax.minimizedAttr) ?? false
-
-        if isMinimized {
-          continue
-        }
-
-        if windowTitle.isEmpty && !isMinimized {
-          continue
-        }
-
-        return (axWindow, app)
-      }
-    }
-    return nil
-  }
-
-  private func findWindowAndAppByTitle(_ titleFilter: String) -> (AXUIElement, NSRunningApplication)? {
-    let runningApps = NSWorkspace.shared.runningApplications
-
-    for app in runningApps {
-      guard app.activationPolicy == .regular else {
-        continue
-      }
-
-      let axApp = AXUIElementCreateApplication(app.processIdentifier)
-
-      guard let axWindows = axApp.get(Ax.windowsAttr) else {
-        continue
-      }
-
-      for axWindow in axWindows {
-        guard axWindow.containingWindowId() != nil else {
-          continue
-        }
-
-        let role = axWindow.get(Ax.roleAttr)
-        if let role = role, role != "AXWindow" {
-          continue
-        }
-
-        let subrole = axWindow.get(Ax.subroleAttr)
-        if let subrole = subrole {
-          let excludedSubroles = ["AXSystemDialog", "AXDialog", "AXUnknown"]
-          if excludedSubroles.contains(subrole) {
-            continue
-          }
-        }
-
-        let size = axWindow.get(Ax.sizeAttr)
-        guard let size = size else {
-          continue
-        }
-
-        if size.width < 100 || size.height < 100 {
-          continue
-        }
-
-        let windowTitle = axWindow.get(Ax.titleAttr) ?? ""
-        let isMinimized = axWindow.get(Ax.minimizedAttr) ?? false
-
-        if isMinimized {
-          continue
-        }
-
-        if windowTitle.localizedCaseInsensitiveContains(titleFilter) {
-          return (axWindow, app)
-        }
-      }
-    }
-    return nil
-  }
-
-  private func findWindowAndAppByPid(_ pidFilter: pid_t) -> (AXUIElement, NSRunningApplication)? {
-    guard let app = NSRunningApplication(processIdentifier: pidFilter),
-          app.activationPolicy == .regular else {
-      return nil
-    }
-
-    let axApp = AXUIElementCreateApplication(pidFilter)
-
-    guard let axWindows = axApp.get(Ax.windowsAttr) else {
-      return nil
-    }
-
-    for axWindow in axWindows {
-      guard axWindow.containingWindowId() != nil else {
-        continue
-      }
-
-      let role = axWindow.get(Ax.roleAttr)
-      if let role = role, role != "AXWindow" {
-        continue
-      }
-
-      let subrole = axWindow.get(Ax.subroleAttr)
-      if let subrole = subrole {
-        let excludedSubroles = ["AXSystemDialog", "AXDialog", "AXUnknown"]
-        if excludedSubroles.contains(subrole) {
-          continue
-        }
-      }
-
-      let size = axWindow.get(Ax.sizeAttr)
-      guard let size = size else {
-        continue
-      }
-
-      if size.width < 100 || size.height < 100 {
-        continue
-      }
-
-      let windowTitle = axWindow.get(Ax.titleAttr) ?? ""
-      let isMinimized = axWindow.get(Ax.minimizedAttr) ?? false
-
-      if isMinimized {
-        continue
-      }
-
-      if windowTitle.isEmpty && !isMinimized {
-        continue
-      }
-
-      return (axWindow, app)
-    }
-    return nil
-  }
-
-  private func findWindowAndAppByCGID(_ targetCGID: CGWindowID) -> (AXUIElement, NSRunningApplication)? {
-    for app in NSWorkspace.shared.runningApplications {
-      guard app.activationPolicy == .regular else { continue }
-
-      let axApp = AXUIElementCreateApplication(app.processIdentifier)
-      var windowsRef: AnyObject?
-      guard AXUIElementCopyAttributeValue(axApp, kAXWindowsAttribute as CFString, &windowsRef) == .success,
-            let windows = windowsRef as? [AXUIElement] else {
-        continue
-      }
-
-      for window in windows {
-        var cgWindowId = CGWindowID()
-        if _AXUIElementGetWindow_Perform(window, &cgWindowId) == .success && cgWindowId == targetCGID {
-          return (window, app)
-        }
-      }
-    }
-    return nil
+    return WindowFinder.findWindowAndApp(cgid: targetCGID)?.window
   }
 
   private func findWindowAtPoint(_ point: CGPoint) -> (AXUIElement, NSRunningApplication)? {

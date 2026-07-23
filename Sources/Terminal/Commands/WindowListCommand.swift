@@ -54,31 +54,15 @@ struct WindowListCommand: ParsableCommand {
             }
 
             for axWindow in axWindows {
-                guard let windowId = axWindow.containingWindowId() else {
+                guard let windowId = axWindow.containingWindowId(),
+                      WindowFinder.isStandardWindow(axWindow)
+                else {
                     continue
-                }
-
-                let role = axWindow.get(Ax.roleAttr)
-                if let role = role, role != "AXWindow" {
-                    continue
-                }
-
-                let subrole = axWindow.get(Ax.subroleAttr)
-                if let subrole = subrole {
-                    let excludedSubroles = ["AXSystemDialog", "AXDialog", "AXUnknown"]
-                    if excludedSubroles.contains(subrole) {
-                        continue
-                    }
                 }
 
                 let position = axWindow.get(Ax.topLeftCornerAttr)
-                let size = axWindow.get(Ax.sizeAttr)
 
-                guard let size = size else {
-                    continue
-                }
-
-                if size.width < 100 || size.height < 100 {
+                guard let size = axWindow.get(Ax.sizeAttr) else {
                     continue
                 }
 
