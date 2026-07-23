@@ -237,11 +237,11 @@ public struct KeyEmitter {
           try emit(Keystroke(.char(char)))
         }
       case .wait(let seconds):
-        usleep(UInt32(seconds * 1_000_000))
+        sleepSeconds(seconds)
         continue
       }
       if index < sequence.items.count - 1 {
-        usleep(UInt32(delay * 1_000_000))
+        sleepSeconds(delay)
       }
     }
   }

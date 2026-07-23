@@ -95,8 +95,8 @@ public class KeyListener {
     }
 
     // scan for character keys (skip already-mapped special keys)
-    let inputSource = TISCopyCurrentKeyboardInputSource().takeRetainedValue()
-    guard let layoutData = TISGetInputSourceProperty(inputSource, kTISPropertyUnicodeKeyLayoutData)
+    guard let inputSource = TISCopyCurrentKeyboardInputSource()?.takeRetainedValue(),
+      let layoutData = TISGetInputSourceProperty(inputSource, kTISPropertyUnicodeKeyLayoutData)
     else {
       return cache
     }
@@ -224,9 +224,14 @@ public class KeyListener {
         options: .defaultTap,
         eventsOfInterest: CGEventMask(eventMask),
         callback: { (proxy, type, event, refcon) -> Unmanaged<CGEvent>? in
+          if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
+            KeyListener.shared.reenableEventTap(reason: type)
+            return Unmanaged.passUnretained(event)
+          }
+
           let handled = KeyListener.handleEvent(proxy: proxy, type: type, event: event)
 
-          return handled ? nil : Unmanaged.passRetained(event)
+          return handled ? nil : Unmanaged.passUnretained(event)
         },
         userInfo: nil
       )
@@ -239,7 +244,17 @@ public class KeyListener {
     let runLoopSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, eventTap, 0)
     CFRunLoopAddSource(CFRunLoopGetCurrent(), runLoopSource, .commonModes)
     CGEvent.tapEnable(tap: eventTap, enable: true)
+
+    Ax.setGlobalMessagingTimeout(0.5)
+
     debugLog("KeyListener initialized, event tap enabled")
+  }
+
+  fileprivate func reenableEventTap(reason: CGEventType) {
+    guard let eventTap = eventTap else { return }
+    CGEvent.tapEnable(tap: eventTap, enable: true)
+    let cause = reason == .tapDisabledByTimeout ? "timeout" : "user input"
+    debugLog("Event tap was disabled by \(cause), re-enabled")
   }
 
   deinit {
@@ -356,7 +371,7 @@ public class KeyListener {
         Self.shared.cancelOverlayShow()
       }
 
-      Self.shared.processKeyPress(key, flags: eventFlags)
+      _ = Self.shared.processKeyPress(key, flags: eventFlags)
 
       // always consume when rcmd is active.
       // we're keeping this modifier for ourselves :3
@@ -456,7 +471,9 @@ public class KeyListener {
     switch result {
     case .complete(let action, let sequence, let consume):
       sequenceBuffer.removeAll()
-      action(sequence)
+      DispatchQueue.main.async {
+        action(sequence)
+      }
       // Return consume flag: if consume=true, prevent event from reaching app
       // if consume=false, let the event pass through to the app
       return consume

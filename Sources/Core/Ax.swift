@@ -226,11 +226,9 @@ public enum Ax {
   public static let sizeAttr = WritableAttrImpl<CGSize>(
     key: kAXSizeAttribute,
     getter: {
+      guard let value = castToAXValue($0) else { return nil }
       var raw: CGSize = .zero
-      if !(AXValueGetValue($0 as! AXValue, .cgSize, &raw)) {
-        fatalError("Fatal error while getting sizeAttr")
-      }
-      return raw
+      return AXValueGetValue(value, .cgSize, &raw) ? raw : nil
     },
     setter: {
       var size = $0
@@ -240,9 +238,9 @@ public enum Ax {
   public static let topLeftCornerAttr = WritableAttrImpl<CGPoint>(
     key: kAXPositionAttribute,
     getter: {
+      guard let value = castToAXValue($0) else { return nil }
       var raw: CGPoint = .zero
-      AXValueGetValue($0 as! AXValue, .cgPoint, &raw)
-      return raw
+      return AXValueGetValue(value, .cgPoint, &raw) ? raw : nil
     },
     setter: {
       var size = $0
@@ -253,7 +251,7 @@ public enum Ax {
   /// If some windows are located on not active macOS Spaces then they won't be returned
   public static let windowsAttr = ReadableAttrImpl<[AXUIElement]>(
     key: kAXWindowsAttribute,
-    getter: { ($0 as! NSArray).compactMap(tryGetWindow) }
+    getter: { ($0 as? NSArray)?.compactMap(tryGetWindow) }
   )
   public static let focusedWindowAttr = ReadableAttrImpl<AXUIElement>(
     key: kAXFocusedWindowAttribute,
@@ -265,20 +263,20 @@ public enum Ax {
   //)
   public static let closeButtonAttr = ReadableAttrImpl<AXUIElement>(
     key: kAXCloseButtonAttribute,
-    getter: { ($0 as! AXUIElement) }
+    getter: castToAXUIElement
   )
   // Note! fullscreen is not the same as "zoom" (green plus)
   public static let fullscreenButtonAttr = ReadableAttrImpl<AXUIElement>(
     key: kAXFullScreenButtonAttribute,
-    getter: { ($0 as! AXUIElement) }
+    getter: castToAXUIElement
   )
   public static let zoomButtonAttr = ReadableAttrImpl<AXUIElement>(
     key: kAXZoomButtonAttribute,
-    getter: { ($0 as! AXUIElement) }
+    getter: castToAXUIElement
   )
   public static let minimizeButtonAttr = ReadableAttrImpl<AXUIElement>(
     key: kAXMinimizeButtonAttribute,
-    getter: { ($0 as! AXUIElement) }
+    getter: castToAXUIElement
   )
   //static let growAreaAttr = ReadableAttrImpl<AXUIElement>(
   //    key: kAXGrowAreaAttribute,
@@ -288,17 +286,31 @@ public enum Ax {
   // Optimized child traversal attributes - returns only visible elements in containers
   public static let visibleChildrenAttr = ReadableAttrImpl<[AXUIElement]>(
     key: kAXVisibleChildrenAttribute as String,
-    getter: { ($0 as! NSArray) as! [AXUIElement] }
+    getter: { ($0 as? NSArray)?.compactMap(castToAXUIElement) }
   )
   public static let visibleRowsAttr = ReadableAttrImpl<[AXUIElement]>(
     key: kAXVisibleRowsAttribute as String,
-    getter: { ($0 as! NSArray) as! [AXUIElement] }
+    getter: { ($0 as? NSArray)?.compactMap(castToAXUIElement) }
   )
+
+  public static func setGlobalMessagingTimeout(_ seconds: Float) {
+    AXUIElementSetMessagingTimeout(AXUIElementCreateSystemWide(), seconds)
+  }
+}
+
+private func castToAXValue(_ any: AnyObject) -> AXValue? {
+  guard CFGetTypeID(any) == AXValueGetTypeID() else { return nil }
+  return (any as! AXValue)
+}
+
+private func castToAXUIElement(_ any: Any?) -> AXUIElement? {
+  guard let any else { return nil }
+  guard CFGetTypeID(any as CFTypeRef) == AXUIElementGetTypeID() else { return nil }
+  return (any as! AXUIElement)
 }
 
 private func tryGetWindow(_ any: Any?) -> AXUIElement? {
-  guard let any else { return nil }
-  let potentialWindow = any as! AXUIElement
+  guard let potentialWindow = castToAXUIElement(any) else { return nil }
   // Filter out non-window objects (e.g. Finder's desktop)
   return potentialWindow.containingWindowId() != nil ? potentialWindow : nil
 }
@@ -306,8 +318,10 @@ private func tryGetWindow(_ any: Any?) -> AXUIElement? {
 public extension AXUIElement {
   func get<Attr: ReadableAttr>(_ attr: Attr) -> Attr.T? {
     var raw: AnyObject?
-    return AXUIElementCopyAttributeValue(self, attr.key as CFString, &raw) == .success
-      ? attr.getter(raw!) : nil
+    guard AXUIElementCopyAttributeValue(self, attr.key as CFString, &raw) == .success,
+      let raw
+    else { return nil }
+    return attr.getter(raw)
   }
 
   @discardableResult func set<Attr: WritableAttr>(_ attr: Attr, _ value: Attr.T) -> Bool {

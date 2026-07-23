@@ -1,15 +1,19 @@
 #!/bin/sh
+set -eu
 
 SERVICE_FILE=org.libred.kbdcmd.plist
+LABEL=org.libred.kbdcmd
 DST_DIR=$HOME/Library/LaunchAgents
+DST=$DST_DIR/$SERVICE_FILE
+DOMAIN=gui/$(id -u)
 
-cp $SERVICE_FILE $DST_DIR/$SERVICE_FILE
+mkdir -p "$DST_DIR"
+cp "$SERVICE_FILE" "$DST"
+chmod 644 "$DST"
 
-chmod 644 $DST_DIR/$SERVICE_FILE
+launchctl bootout "$DOMAIN/$LABEL" 2>/dev/null || true
 
-# If you encounter "Load failed: 5: Input/output error", try:
-# launchctl unload $HOME/Library/LaunchAgents/org.libred.kbdcmd.plist
+launchctl bootstrap "$DOMAIN" "$DST"
+launchctl kickstart "$DOMAIN/$LABEL"
 
-launchctl load $DST_DIR/$SERVICE_FILE
-
-launchctl start org.libred.kbdcmd.plist
+echo "Installed and started $LABEL"

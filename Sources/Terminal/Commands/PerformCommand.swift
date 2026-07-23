@@ -106,7 +106,7 @@ struct PerformCommand: AsyncParsableCommand {
         throw ValidationError("Text argument required for type operation")
       }
       if wait > 0 {
-        usleep(UInt32(wait * 1_000_000))
+        sleepSeconds(wait)
       }
       if clear {
         try KeyEmitter.emit(cmd(.char("a")))
@@ -381,7 +381,8 @@ struct PerformCommand: AsyncParsableCommand {
     // Get the menu bar
     var menuBarRef: AnyObject?
     guard AXUIElementCopyAttributeValue(axApp, kAXMenuBarAttribute as CFString, &menuBarRef) == .success,
-          let menuBar = menuBarRef else {
+          let menuBar = menuBarRef,
+          CFGetTypeID(menuBar) == AXUIElementGetTypeID() else {
       throw ValidationError("Could not access menu bar for '\(targetApp.localizedName ?? "app")'")
     }
 

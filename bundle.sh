@@ -6,7 +6,7 @@ BUNDLE_DIR=".build/${APP_NAME}.app"
 CONTENTS_DIR="${BUNDLE_DIR}/Contents"
 MACOS_DIR="${CONTENTS_DIR}/MacOS"
 RESOURCES_DIR="${CONTENTS_DIR}/Resources"
-TARGET=debug
+TARGET=${TARGET:-release}
 
 echo "Building kbdcmd-app..."
 swift build -c $TARGET --product kbdcmd-app

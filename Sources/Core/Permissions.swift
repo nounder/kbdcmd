@@ -17,6 +17,7 @@ public struct Permissions {
       openSystemPreferencesToAccessibility()
       throw PermissionError.accessibilityNotGranted
     }
+    Ax.setGlobalMessagingTimeout(1.0)
   }
 
   private static func openSystemPreferencesToAccessibility() {

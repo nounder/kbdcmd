@@ -334,6 +334,7 @@ struct KeyboardCommand: ParsableCommand {
       | (1 << CGEventType.keyUp.rawValue)
       | (1 << CGEventType.flagsChanged.rawValue)
 
+    let contextPtr = Unmanaged.passUnretained(state).toOpaque()
     guard
       let tap = CGEvent.tapCreate(
         tap: .cgSessionEventTap,
@@ -341,10 +342,19 @@ struct KeyboardCommand: ParsableCommand {
         options: .listenOnly,
         eventsOfInterest: eventMask,
         callback: { proxy, type, event, refcon in
+          if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
+            if let refcon = refcon {
+              let state = Unmanaged<MonitorState>.fromOpaque(refcon).takeUnretainedValue()
+              if let tap = state.eventTap {
+                CGEvent.tapEnable(tap: tap, enable: true)
+              }
+            }
+            return Unmanaged.passUnretained(event)
+          }
           let _ = KeyboardCommand.handleCGEvent(proxy: proxy, type: type, event: event)
-          return Unmanaged.passRetained(event)
+          return Unmanaged.passUnretained(event)
         },
-        userInfo: nil
+        userInfo: contextPtr
       )
     else {
       print("ERROR: Failed to create CG event tap")
@@ -538,7 +548,7 @@ struct KeyboardCommand: ParsableCommand {
   {
     let cgEvent = createCGEventData(type: type, event: event)
     print(formatCGEvent(cgEvent))
-    return Unmanaged.passRetained(event)
+    return Unmanaged.passUnretained(event)
   }
 
   private static func createCGEventData(type: CGEventType, event: CGEvent) -> CGEventData {
