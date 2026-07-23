@@ -30,11 +30,12 @@ class WindowChangePublisher: ObservableObject {
 
   private var axObservers: [AXObserver] = []
   private var workspaceObservers: [NSObjectProtocol] = []
+  private var refreshPending = false
   private let backgroundQueue = DispatchQueue(
     label: "com.kbdcmd.windowPublisher", qos: .userInitiated)
 
   func startMonitoring() {
-    refresh()
+    refreshNow()
     setupWorkspaceNotifications()
     setupAccessibilityObservers()
   }
@@ -45,6 +46,16 @@ class WindowChangePublisher: ObservableObject {
   }
 
   private func refresh() {
+    guard !refreshPending else { return }
+    refreshPending = true
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
+      guard let self = self else { return }
+      self.refreshPending = false
+      self.refreshNow()
+    }
+  }
+
+  private func refreshNow() {
     // Perform heavy window querying on background queue to avoid blocking main thread
     backgroundQueue.async { [weak self] in
       guard let self = self else { return }
@@ -67,11 +78,17 @@ class WindowChangePublisher: ObservableObject {
     ]
 
     for name in notifications {
-      let observer = NotificationCenter.default.addObserver(
+      let observer = NSWorkspace.shared.notificationCenter.addObserver(
         forName: name,
         object: nil,
         queue: .main
-      ) { [weak self] _ in
+      ) { [weak self] notification in
+        if name == NSWorkspace.didLaunchApplicationNotification,
+          let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey]
+            as? NSRunningApplication
+        {
+          self?.addAccessibilityObserver(for: app)
+        }
         self?.refresh()
       }
       workspaceObservers.append(observer)
@@ -80,60 +97,59 @@ class WindowChangePublisher: ObservableObject {
 
   private func removeWorkspaceNotifications() {
     for observer in workspaceObservers {
-      NotificationCenter.default.removeObserver(observer)
+      NSWorkspace.shared.notificationCenter.removeObserver(observer)
     }
     workspaceObservers.removeAll()
   }
 
   private func setupAccessibilityObservers() {
-    let runningApps = NSWorkspace.shared.runningApplications
-
-    for app in runningApps {
-      guard app.activationPolicy == .regular else { continue }
-
-      var observer: AXObserver?
-      let result = AXObserverCreate(
-        app.processIdentifier,
-        { (observer, element, notification, refcon) in
-          let publisher = Unmanaged<WindowChangePublisher>.fromOpaque(refcon!).takeUnretainedValue()
-          publisher.refresh()
-        },
-        &observer
-      )
-
-      guard result == .success, let observer = observer else {
-        continue
-      }
-
-      let appElement = AXUIElementCreateApplication(app.processIdentifier)
-
-      let notifications = [
-        kAXWindowCreatedNotification,
-        // thats probably lots of notifications, do we need it?
-        kAXUIElementDestroyedNotification,
-        kAXWindowMiniaturizedNotification,
-        kAXWindowDeminiaturizedNotification,
-        kAXMovedNotification,
-        kAXResizedNotification,
-      ]
-
-      for notification in notifications {
-        AXObserverAddNotification(
-          observer,
-          appElement,
-          notification as CFString,
-          Unmanaged.passUnretained(self).toOpaque()
-        )
-      }
-
-      CFRunLoopAddSource(
-        CFRunLoopGetCurrent(),
-        AXObserverGetRunLoopSource(observer),
-        .defaultMode
-      )
-
-      axObservers.append(observer)
+    for app in NSWorkspace.shared.runningApplications {
+      addAccessibilityObserver(for: app)
     }
+  }
+
+  private func addAccessibilityObserver(for app: NSRunningApplication) {
+    guard app.activationPolicy == .regular else { return }
+
+    var observer: AXObserver?
+    let result = AXObserverCreate(
+      app.processIdentifier,
+      { (observer, element, notification, refcon) in
+        let publisher = Unmanaged<WindowChangePublisher>.fromOpaque(refcon!).takeUnretainedValue()
+        publisher.refresh()
+      },
+      &observer
+    )
+
+    guard result == .success, let observer = observer else {
+      return
+    }
+
+    let appElement = AXUIElementCreateApplication(app.processIdentifier)
+
+    let notifications = [
+      kAXWindowCreatedNotification,
+      kAXUIElementDestroyedNotification,
+      kAXWindowMiniaturizedNotification,
+      kAXWindowDeminiaturizedNotification,
+    ]
+
+    for notification in notifications {
+      AXObserverAddNotification(
+        observer,
+        appElement,
+        notification as CFString,
+        Unmanaged.passUnretained(self).toOpaque()
+      )
+    }
+
+    CFRunLoopAddSource(
+      CFRunLoopGetCurrent(),
+      AXObserverGetRunLoopSource(observer),
+      .defaultMode
+    )
+
+    axObservers.append(observer)
   }
 
   private func removeAccessibilityObservers() {

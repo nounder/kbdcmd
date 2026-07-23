@@ -44,8 +44,8 @@ struct IntentCommand: AsyncParsableCommand {
       let inputPipe = Pipe()
       process.standardInput = inputPipe
       try process.run()
-      inputPipe.fileHandleForWriting.write(inputValue.data(using: .utf8)!)
-      inputPipe.fileHandleForWriting.closeFile()
+      try? inputPipe.fileHandleForWriting.write(contentsOf: Data(inputValue.utf8))
+      try? inputPipe.fileHandleForWriting.close()
     } else {
       try process.run()
     }

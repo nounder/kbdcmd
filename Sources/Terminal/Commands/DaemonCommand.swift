@@ -1,3 +1,4 @@
+import AppKit
 import ArgumentParser
 import Core
 import Foundation
@@ -11,9 +12,13 @@ struct DaemonCommand: ParsableCommand {
   func run() throws {
     try Permissions.checkAccessibility()
 
+    let app = NSApplication.shared
+    app.setActivationPolicy(.accessory)
+
     print("kbdcmd daemon started")
     registerDefaultKeybindings()
-    KeyListener.shared.start()
+    _ = KeyListener.shared
+    app.run()
   }
 
   private func registerDefaultKeybindings() {

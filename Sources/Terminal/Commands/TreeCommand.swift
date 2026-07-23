@@ -129,7 +129,7 @@ struct TreeCommand: AsyncParsableCommand {
   @Option(name: .long, help: "Output format: indent (default) or xml")
   var format: OutputFormat = .indent
 
-  @Option(name: .long, help: "Maximum depth to traverse (unlimited if not specified)")
+  @Option(name: .long, help: "Maximum depth to traverse (default: 100)")
   var maxDepth: Int?
 
   @Option(name: .long, help: "Target window by CGWindowID (use window-list to find)")
@@ -267,13 +267,14 @@ struct TreeCommand: AsyncParsableCommand {
     let includeTiny = verbose || tiny
     let includeEmpty = verbose || empty
     let visibleOnly = !(verbose || invisible)
+    let depthLimit = maxDepth ?? 100
 
     func buildNode(
       element: AXUIElement,
       depth: Int,
       nodeId: String
     ) -> (node: WalkerNode, hasMeaningfulContent: Bool)? {
-      if let maxDepth = maxDepth, depth > maxDepth {
+      if depth > depthLimit {
         return nil
       }
 
@@ -294,7 +295,7 @@ struct TreeCommand: AsyncParsableCommand {
       }
 
       let children = registry.getChildren(element, visibleOnly: visibleOnly)
-      let hasChildren = !children.isEmpty && (maxDepth == nil || depth < maxDepth!)
+      let hasChildren = !children.isEmpty && depth < depthLimit
 
       let title = registry.getAttr(element, kAXTitleAttribute) as? String
       let value = registry.getAttr(element, kAXValueAttribute) as? String

@@ -156,6 +156,25 @@ public class Keybindings {
 
     // Load saved keybindings
     loadKeybindings()
+
+    NSWorkspace.shared.notificationCenter.addObserver(
+      forName: NSWorkspace.didTerminateApplicationNotification,
+      object: nil,
+      queue: .main
+    ) { [weak self] notification in
+      guard
+        let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey]
+          as? NSRunningApplication
+      else { return }
+      self?.handleAppTerminated(app.processIdentifier)
+    }
+  }
+
+  private func handleAppTerminated(_ pid: pid_t) {
+    guard let windowIds = monitoredWindows[pid] else { return }
+    for windowId in windowIds {
+      handleWindowDestroyed(windowId)
+    }
   }
 
   // MARK: - Registration
