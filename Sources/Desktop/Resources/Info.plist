@@ -26,6 +26,8 @@
 	<true/>
 	<key>NSHighResolutionCapable</key>
 	<true/>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Kbdcmd uses the microphone for push-to-talk dictation (hold the Fn key to speak).</string>
 	<key>NSHumanReadableCopyright</key>
 	<string>Copyright 2024</string>
 </dict>

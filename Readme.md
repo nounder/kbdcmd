@@ -25,5 +25,26 @@ After you enable Permissions, as prompted on startup, open "Kbdcmd" app Applicat
 
 holding <kbd>right command</kbd> will show all running applications with their key assigned.
 
+## Dictation
+
+Local, offline speech-to-text powered by NVIDIA's Parakeet TDT v3 model (25 languages) running on the Apple Neural Engine via CoreML. No third-party frameworks; model weights are downloaded once (~500 MB) from Hugging Face.
+
+- **Hold <kbd>fn</kbd>** and speak — release to transcribe and paste into the focused app. A small waveform dot shows while recording.
+- **Double-tap <kbd>fn</kbd>** for a hands-free session with live transcription in the overlay — press <kbd>fn</kbd> again to insert, <kbd>esc</kbd> to discard.
+
+Setup:
+
+```sh
+# download the model up front (otherwise it downloads on first use)
+kbdcmd dictation download
+
+# test the pipeline on an audio file
+kbdcmd dictation transcribe recording.wav
+```
+
+Recommended: set System Settings → Keyboard → "Press 🌐 key to" → **Do Nothing**, so the emoji picker or Apple Dictation don't fight over the key. Microphone permission is requested on first use; dictation works best from the Kbdcmd app (the bare CLI daemon can't reliably prompt for mic access). Fn combos (<kbd>fn</kbd>+arrows etc.) pass through untouched.
+
+The model loads once (at app launch when already downloaded) and stays in memory. Settings (menu bar → Settings) has the dictation on/off switch and the model download; `kbdcmd dictation status` shows the model cache state.
+
 
 

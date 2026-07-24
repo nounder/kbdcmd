@@ -25,6 +25,7 @@ struct Kbdcmd: AsyncParsableCommand {
       TypeCommand.self,
       WatchCommand.self,
       OsaCommand.self,
+      DictationCommand.self,
     ]
   )
 }

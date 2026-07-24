@@ -20,3 +20,6 @@ clean:
 
 reset-permissions:
 	tccutil reset Accessibility org.libred.kbdcmd
+
+reset-mic-permission:
+	tccutil reset Microphone org.libred.kbdcmd

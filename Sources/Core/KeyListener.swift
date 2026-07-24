@@ -303,6 +303,15 @@ public class KeyListener {
     }
 
     if type == .flagsChanged {
+      if keyCode == 63 {
+        let isDown = event.flags.contains(.maskSecondaryFn)
+        if DictationController.shared.handleFnFlagChange(isDown: isDown) {
+          return true
+        }
+      } else if DictationController.shared.isEngaged {
+        DictationController.shared.handleOtherModifierChange()
+      }
+
       if keyCode == Key.Named.rightCommand.rawValue {
         if event.flags.contains(.maskCmdRight) {
           // Right Command pressed - start timer to show overlay after 400ms
@@ -330,6 +339,12 @@ public class KeyListener {
     // a key with rcmd is pressed
     if type == .keyDown {
       let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
+
+      if DictationController.shared.isEngaged {
+        if DictationController.shared.handleKeyDown(keyCode: keyCode) {
+          return true
+        }
+      }
 
       // Skip Caps Lock key itself - it's handled via flagsChanged and HID events
       if keyCode == 57 || keyCode == 62 {

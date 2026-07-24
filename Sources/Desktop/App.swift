@@ -218,7 +218,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     for app in NSRunningApplication.runningApplications(withBundleIdentifier: bundleId) {
       if app.processIdentifier != currentPid {
-        app.terminate()
+        // Polite terminate() is ignored by a headless accessory instance
+        // whose run loop is busy with the event tap; force it so old and new
+        // instances can't end up killing each other instead.
+        app.forceTerminate()
       }
     }
   }
@@ -346,13 +349,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
   }
 
   private func startDaemon() {
-    // Initialize KeyListener (this sets up event tap on the current run loop)
-    // No need to call .start() - the app's run loop will handle it
-    _ = KeyListener.shared
-
-    // Register all keybindings
-    registerDefaultKeybindings()
-
+    DaemonRuntime.start()
     print("✓ Kbdcmd daemon started - listening for keyboard shortcuts!")
   }
 
@@ -459,91 +456,4 @@ class AppDelegate: NSObject, NSApplicationDelegate {
   }
 
 
-  private func registerDefaultKeybindings() {
-    let kb = Keybindings.shared
-
-    // Right Command + ` to assign keybinding for frontmost app
-    kb.register([KeyPress(key: .character("`"), flags: .maskCmdRight)]) { _ in
-      if let appPath = WindowManager.main.getFrontmostAppPath() {
-        KeybindingAssignmentOverlay.shared.show(for: appPath)
-      }
-    }
-
-    // Right Command + Shift + ` to assign keybinding for frontmost window
-    kb.register(
-      [KeyPress(key: .character("`"), flags: [.maskCmdRight, .maskShiftLeft, .maskShiftRight])]
-    ) { _ in
-      if let windowId = WindowManager.main.getFrontmostWindow() {
-        let windowTitle = WindowManager.main.getWindowTitle(windowId: windowId) ?? "Window"
-        KeybindingAssignmentOverlay.shared.show(forWindow: windowId, windowTitle: windowTitle)
-      }
-    }
-
-    // Right Command + / for hints
-    kb.register([KeyPress(key: .character("/"), flags: .maskCmdRight)]) { _ in
-      OverlayManager.shared.showHintOverlay()
-    }
-
-    // CapsLock + J/K for scrolling
-    kb.register([KeyPress(key: .character("J"), flags: .maskAlphaShift)]) { _ in
-      Scrolling.shared.smoothScroll(-120)
-    }
-
-    kb.register([KeyPress(key: .character("K"), flags: .maskAlphaShift)]) { _ in
-      Scrolling.shared.smoothScroll(120)
-    }
-
-    // Character-only sequences (snippets)
-    let seqTdf = [
-      KeyPress(key: .character("t")),
-      KeyPress(key: .character("d")),
-      KeyPress(key: .character("f")),
-    ]
-    kb.register(seqTdf) { seq in
-      let df = DateFormatter()
-      df.dateFormat = "yyyy-MM-dd"
-      let dateString = df.string(from: Date())
-      Snippets.expandSnippet(for: seq, insert: dateString)
-    }
-
-    let seqTds = [
-      KeyPress(key: .character("t")),
-      KeyPress(key: .character("d")),
-      KeyPress(key: .character("s")),
-    ]
-    kb.register(seqTds) { seq in
-      let df = DateFormatter()
-      df.dateFormat = "yyMMdd"
-      let dateString = df.string(from: Date())
-      Snippets.expandSnippet(for: seq, insert: dateString)
-    }
-
-    // CapsLock + Arrow keys for window moving
-    kb.register([KeyPress(key: .named(.upArrow), flags: .maskAlphaShift)]) { _ in
-      WindowManager.main.moveFrontmostWindow(direction: .up)
-    }
-    kb.register([KeyPress(key: .named(.downArrow), flags: .maskAlphaShift)]) { _ in
-      WindowManager.main.moveFrontmostWindow(direction: .down)
-    }
-    kb.register([KeyPress(key: .named(.leftArrow), flags: .maskAlphaShift)]) { _ in
-      WindowManager.main.moveFrontmostWindow(direction: .left)
-    }
-    kb.register([KeyPress(key: .named(.rightArrow), flags: .maskAlphaShift)]) { _ in
-      WindowManager.main.moveFrontmostWindow(direction: .right)
-    }
-
-    // CapsLock + Shift + Arrow keys for window resizing
-    kb.register([KeyPress(key: .named(.rightArrow), flags: [.maskAlphaShift, .maskShiftLeft, .maskShiftRight])]) { _ in
-      WindowManager.main.resizeFrontmostWindow(direction: .right)
-    }
-    kb.register([KeyPress(key: .named(.leftArrow), flags: [.maskAlphaShift, .maskShiftLeft, .maskShiftRight])]) { _ in
-      WindowManager.main.resizeFrontmostWindow(direction: .left)
-    }
-    kb.register([KeyPress(key: .named(.downArrow), flags: [.maskAlphaShift, .maskShiftLeft, .maskShiftRight])]) { _ in
-      WindowManager.main.resizeFrontmostWindow(direction: .down)
-    }
-    kb.register([KeyPress(key: .named(.upArrow), flags: [.maskAlphaShift, .maskShiftLeft, .maskShiftRight])]) { _ in
-      WindowManager.main.resizeFrontmostWindow(direction: .up)
-    }
-  }
 }
