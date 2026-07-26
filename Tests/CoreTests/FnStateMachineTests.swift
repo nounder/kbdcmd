@@ -32,7 +32,7 @@ struct FnStateMachineTests {
     let globe = send(.keyDown(keyCode: 179), at: 0.141)
     #expect(!globe.consumeEvent)
     #expect(globe.effects.isEmpty)
-    #expect(machine.state == .awaitingSecondTap)
+    #expect(machine.state == .awaitingSecondTap(cuePlayed: false))
 
     _ = send(.fnDown, at: 0.32)
     #expect(machine.state == .toggleActive(startedAt: 0.32))
@@ -44,13 +44,14 @@ struct FnStateMachineTests {
 
   @Test mutating func quickDoubleTapStartsToggle() {
     _ = pressFn(downAt: 0, upAt: 0.15)
-    #expect(machine.state == .awaitingSecondTap)
+    #expect(machine.state == .awaitingSecondTap(cuePlayed: false))
 
     let output = send(.fnDown, at: 0.4)
     #expect(machine.state == .toggleActive(startedAt: 0.4))
     #expect(output.consumeEvent)
     #expect(output.effects.contains(.showToggleOverlay))
     #expect(output.effects.contains(.beginToggleSession))
+    #expect(output.effects.contains(.playStartCue))
 
     let release = send(.fnUp, at: 0.55)
     #expect(release.consumeEvent)
@@ -58,41 +59,71 @@ struct FnStateMachineTests {
   }
 
   @Test mutating func moderateSpeedDoubleTapStartsToggle() {
-    // 400ms presses with a 300ms gap: the hold timer fires mid-press, so the
-    // first tap goes through holdRecording before release classifies it.
+    // 400ms presses with a 300ms gap: the hold timer fires mid-press (playing
+    // the start cue), so the first tap goes through holdRecording before
+    // release classifies it. The running capture is kept and the toggle skips
+    // the cue — one mic activation, one sound.
     let first = pressFn(downAt: 0, upAt: 0.4)
-    #expect(machine.state == .awaitingSecondTap)
+    #expect(machine.state == .awaitingSecondTap(cuePlayed: true))
     #expect(first.effects.contains(.hideOverlay))
-    #expect(first.effects.contains(.discardCapture))
+    #expect(!first.effects.contains(.discardCapture))
     #expect(!first.effects.contains(.finishHoldSession))
 
-    _ = send(.fnDown, at: 0.7)
+    let toggle = send(.fnDown, at: 0.7)
     #expect(machine.state == .toggleActive(startedAt: 0.7))
+    #expect(!toggle.effects.contains(.playStartCue))
+  }
+
+  // Capture starts silently at fn-down (hold dictation must not lose the
+  // first word); the audible cue plays exactly once, when a mode engages.
+  @Test mutating func captureStartsAtFnDownButCuePlaysAtToggle() {
+    let down = send(.fnDown, at: 0)
+    #expect(down.effects.contains(.startCapture))
+    #expect(!down.effects.contains(.playStartCue))
+
+    let up = send(.fnUp, at: 0.15)
+    #expect(!up.effects.contains(.discardCapture))
+    #expect(!up.effects.contains(.playStartCue))
+
+    let toggle = send(.fnDown, at: 0.4)
+    #expect(toggle.effects.contains(.playStartCue))
+    #expect(toggle.effects.contains(.beginToggleSession))
+  }
+
+  @Test mutating func expiredTapWindowStopsAnyRunningCapture() {
+    _ = pressFn(downAt: 0, upAt: 0.4)
+    #expect(machine.state == .awaitingSecondTap(cuePlayed: true))
+
+    let timeout = send(.tapTimerFired, at: 1.2)
+    #expect(timeout.effects.contains(.discardCapture))
+    #expect(machine.state == .idle)
   }
 
   @Test mutating func slowDoubleTapWithinGenerousWindowStartsToggle() {
     _ = pressFn(downAt: 0, upAt: 0.5)
-    #expect(machine.state == .awaitingSecondTap)
+    #expect(machine.state == .awaitingSecondTap(cuePlayed: true))
 
     _ = send(.fnDown, at: 1.2)
     #expect(machine.state == .toggleActive(startedAt: 1.2))
   }
 
   @Test mutating func singleTapTimesOutToIdle() {
-    let output = pressFn(downAt: 0, upAt: 0.2)
+    let output = pressFn(downAt: 0, upAt: 0.12)
     #expect(!output.consumeEvent)
-    #expect(machine.state == .awaitingSecondTap)
+    #expect(machine.state == .awaitingSecondTap(cuePlayed: false))
 
     _ = send(.tapTimerFired, at: 0.95)
     #expect(machine.state == .idle)
   }
 
   @Test mutating func holdDictationTranscribesOnRelease() {
-    _ = send(.fnDown, at: 0)
+    let down = send(.fnDown, at: 0)
+    #expect(down.effects.contains(.startCapture))
     #expect(machine.state == .pending(downAt: 0))
 
     let hold = send(.holdTimerFired, at: 0.3)
     #expect(hold.effects.contains(.showHoldOverlay))
+    #expect(hold.effects.contains(.playStartCue))
     #expect(machine.state == .holdRecording(downAt: 0))
 
     let release = send(.fnUp, at: 2.5)
@@ -155,7 +186,7 @@ struct FnStateMachineTests {
     _ = send(.fnDown, at: 0)
     let arrow = send(.keyDown(keyCode: 126), at: 0.1)
     #expect(!arrow.consumeEvent)
-    #expect(arrow.effects.contains(.discardCapture))
+    #expect(arrow.effects.contains(.cancelHoldTimer))
     #expect(machine.state == .idle)
 
     _ = send(.fnUp, at: 0.2)
@@ -199,10 +230,11 @@ struct FnStateMachineTests {
     machine.config.holdEnabled = false
     let first = pressFn(downAt: 0, upAt: 0.4)
     #expect(!first.effects.contains(.finishHoldSession))
-    #expect(machine.state == .awaitingSecondTap)
+    #expect(machine.state == .awaitingSecondTap(cuePlayed: false))
 
-    _ = send(.fnDown, at: 0.7)
+    let toggle = send(.fnDown, at: 0.7)
     #expect(machine.state == .toggleActive(startedAt: 0.7))
+    #expect(toggle.effects.contains(.playStartCue))
   }
 
   @Test mutating func holdDisabledLongPressDiscards() {
@@ -229,7 +261,7 @@ struct FnStateMachineTests {
 
   @Test mutating func tapThenLaterHoldStartsFreshHold() {
     _ = pressFn(downAt: 0, upAt: 0.15)
-    #expect(machine.state == .awaitingSecondTap)
+    #expect(machine.state == .awaitingSecondTap(cuePlayed: false))
     _ = send(.tapTimerFired, at: 0.95)
     #expect(machine.state == .idle)
 

@@ -5,8 +5,10 @@ import Foundation
 // deterministic and unit-testable.
 public struct FnStateMachine {
   public struct Config {
-    // Delay before the hold overlay appears while fn is held.
-    public var holdIndicatorDelay: TimeInterval = 0.30
+    // Delay before the hold cue and overlay while fn is held. Audio capture
+    // itself starts at fn-down, so this only gates feedback: short enough to
+    // feel immediate, long enough that taps and fn-combos don't flash/beep.
+    public var holdIndicatorDelay: TimeInterval = 0.15
     // A press released before this counts as a tap even if the hold overlay
     // already appeared; only longer presses transcribe on release.
     public var tapMaxDuration: TimeInterval = 0.60
@@ -24,7 +26,7 @@ public struct FnStateMachine {
   public enum State: Equatable {
     case idle
     case pending(downAt: TimeInterval)
-    case awaitingSecondTap
+    case awaitingSecondTap(cuePlayed: Bool)
     case holdRecording(downAt: TimeInterval)
     case toggleActive(startedAt: TimeInterval)
     case transcribing
@@ -44,6 +46,7 @@ public struct FnStateMachine {
   public enum Effect: Equatable {
     case startCapture
     case discardCapture
+    case playStartCue
     case showHoldOverlay
     case showToggleOverlay
     case hideOverlay
@@ -108,8 +111,8 @@ public struct FnStateMachine {
       return handleIdle(event, at: now)
     case .pending(let downAt):
       return handlePending(event, at: now, downAt: downAt)
-    case .awaitingSecondTap:
-      return handleAwaitingSecondTap(event, at: now)
+    case .awaitingSecondTap(let cuePlayed):
+      return handleAwaitingSecondTap(event, at: now, cuePlayed: cuePlayed)
     case .holdRecording(let downAt):
       return handleHoldRecording(event, at: now, downAt: downAt)
     case .toggleActive(let startedAt):
@@ -119,16 +122,17 @@ public struct FnStateMachine {
     }
   }
 
-  // Capture deliberately does NOT start on the first fn-down: the mic
-  // activation (and its audible feedback, e.g. on Bluetooth headsets) happens
-  // exactly once, when a mode actually engages — at the hold indicator for
-  // push-to-talk, or at the second tap for a toggle session.
+  // The mic starts listening silently the moment fn goes down so hold
+  // dictation never loses the first word. The audible start cue is decoupled
+  // from capture and plays exactly once per gesture, when a mode actually
+  // engages — at the hold indicator, or at the second tap of a double-tap
+  // (unless a slow first press already played it).
   private mutating func handleIdle(_ event: Event, at now: TimeInterval) -> Output {
     guard event == .fnDown, config.holdEnabled || config.doubleTapEnabled else {
       return .passThrough()
     }
     state = .pending(downAt: now)
-    return .passThrough([.armHoldTimer(config.holdIndicatorDelay)])
+    return .passThrough([.startCapture, .armHoldTimer(config.holdIndicatorDelay)])
   }
 
   private mutating func handlePending(
@@ -137,18 +141,20 @@ public struct FnStateMachine {
     switch event {
     case .holdTimerFired:
       state = .holdRecording(downAt: downAt)
-      return .passThrough(config.holdEnabled ? [.startCapture, .showHoldOverlay] : [])
+      return .passThrough(config.holdEnabled ? [.playStartCue, .showHoldOverlay] : [])
     case .fnUp:
-      return registerTap()
+      return registerTap(cuePlayed: false)
     case .keyDown, .otherModifierChanged:
       state = .idle
-      return .passThrough([.cancelHoldTimer])
+      return .passThrough([.cancelHoldTimer, .discardCapture])
     default:
       return .passThrough()
     }
   }
 
-  private mutating func handleAwaitingSecondTap(_ event: Event, at now: TimeInterval) -> Output {
+  private mutating func handleAwaitingSecondTap(
+    _ event: Event, at now: TimeInterval, cuePlayed: Bool
+  ) -> Output {
     switch event {
     case .fnDown:
       guard config.doubleTapEnabled else {
@@ -157,12 +163,16 @@ public struct FnStateMachine {
       }
       state = .toggleActive(startedAt: now)
       ignoreNextFnUp = true
-      return .consume([
-        .cancelTapTimer,
+      var effects: [Effect] = [.cancelTapTimer]
+      if !cuePlayed {
+        effects.append(.playStartCue)
+      }
+      effects.append(contentsOf: [
         .showToggleOverlay,
         .beginToggleSession,
         .armMaxSessionTimer(config.maxSessionDuration),
       ])
+      return .consume(effects)
     case .tapTimerFired:
       state = .idle
       return .passThrough([.discardCapture])
@@ -180,7 +190,7 @@ public struct FnStateMachine {
     switch event {
     case .fnUp:
       if now - downAt < config.tapMaxDuration {
-        let output = registerTap()
+        let output = registerTap(cuePlayed: config.holdEnabled)
         return Output(effects: [.hideOverlay] + output.effects, consumeEvent: output.consumeEvent)
       }
       guard config.holdEnabled else {
@@ -227,15 +237,15 @@ public struct FnStateMachine {
     return .passThrough()
   }
 
-  // A tap from a slow first press may leave the mic running (holdRecording
-  // already started it); it stays on through awaitingSecondTap so the toggle
-  // session reuses it instead of re-activating the microphone.
-  private mutating func registerTap() -> Output {
+  // The mic keeps running through awaitingSecondTap so a toggle session
+  // reuses it instead of re-activating the microphone; cuePlayed records
+  // whether a slow first press already played the start cue.
+  private mutating func registerTap(cuePlayed: Bool) -> Output {
     guard config.doubleTapEnabled else {
       state = .idle
       return .passThrough([.cancelHoldTimer, .discardCapture])
     }
-    state = .awaitingSecondTap
+    state = .awaitingSecondTap(cuePlayed: cuePlayed)
     return .passThrough([.cancelHoldTimer, .armTapTimer(config.doubleTapWindow)])
   }
 }

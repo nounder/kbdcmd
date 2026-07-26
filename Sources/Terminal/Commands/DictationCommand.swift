@@ -55,6 +55,14 @@ struct DictationCommand: AsyncParsableCommand {
     @Option(help: "Encoder precision: int8 or int4")
     var precision: String = "int8"
 
+    @Option(
+      name: .customLong("hotword"),
+      help: "Phrase to contextually bias; repeat for multiple phrases")
+    var hotwords: [String] = []
+
+    @Option(help: "Logit boost for --hotword (default: 4)")
+    var hotwordBoost: Float = 4
+
     func run() async throws {
       let precision = try parsePrecision(self.precision)
       let samples = try loadSamples16kMono(path: file)
@@ -64,6 +72,9 @@ struct DictationCommand: AsyncParsableCommand {
       let transcriber = ParakeetTranscriber.shared
       let loadStart = Date()
       try await transcriber.prepare(precision: precision)
+      if !hotwords.isEmpty {
+        try await transcriber.setHotwords(hotwords, boost: hotwordBoost)
+      }
       print("Models loaded in \(String(format: "%.2f", -loadStart.timeIntervalSinceNow))s")
 
       let start = Date()

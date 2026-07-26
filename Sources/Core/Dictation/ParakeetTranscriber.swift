@@ -7,6 +7,7 @@ public actor ParakeetTranscriber {
 
   private var models: ParakeetModels?
   private let decoder = TdtDecoder()
+  private var hotwordBias: TdtHotwordBias?
 
   public func prepare(precision: ParakeetEncoderPrecision = .int8) throws {
     guard models == nil else { return }
@@ -19,6 +20,12 @@ public actor ParakeetTranscriber {
     DictationModelStatus.shared.set(.loading)
     do {
       models = try ParakeetModels.load(from: directory, precision: precision)
+      do {
+        try setHotwords(DictationSettings.hotwords, boost: DictationSettings.hotwordBoost)
+      } catch {
+        // Invalid saved phrases must not prevent the speech model from loading.
+        hotwordBias = nil
+      }
       DictationModelStatus.shared.set(.loaded)
     } catch {
       DictationModelStatus.shared.set(.notLoaded)
@@ -27,6 +34,40 @@ public actor ParakeetTranscriber {
   }
 
   public var isPrepared: Bool { models != nil }
+
+  /// Configures decoder-time contextual biasing for names, acronyms, and
+  /// domain-specific phrases. `boost` is added to matching token logits; 4 is
+  /// a useful starting point, while larger values increase false positives.
+  /// Call this after `prepare`. Passing an empty array disables biasing.
+  public func setHotwords(_ phrases: [String], boost: Float = 4) throws {
+    guard boost.isFinite, boost > 0 else {
+      throw DictationError.processingFailed("Hotword boost must be a positive finite number")
+    }
+    guard let tokenizer = models?.tokenizer else {
+      throw DictationError.modelsMissing("prepare the transcriber before setting hotwords")
+    }
+
+    if phrases.isEmpty {
+      hotwordBias = nil
+      return
+    }
+
+    var sequences: [[Int]] = []
+    for phrase in phrases {
+      guard let tokens = tokenizer.encodePhrase(phrase) else {
+        throw DictationError.processingFailed(
+          "Hotword cannot be represented by the Parakeet vocabulary: \(phrase)")
+      }
+      if !sequences.contains(tokens) {
+        sequences.append(tokens)
+      }
+    }
+    hotwordBias = TdtHotwordBias(tokenSequences: sequences, boost: boost)
+  }
+
+  public func clearHotwords() {
+    hotwordBias = nil
+  }
 
   public func warmUp() async throws {
     let silence = [Float](repeating: 0, count: ParakeetConstants.sampleRate)
@@ -170,7 +211,8 @@ public actor ParakeetTranscriber {
       decoderModel: models.decoder,
       jointModel: models.joint,
       decoderState: &state,
-      isLastChunk: isLastChunk
+      isLastChunk: isLastChunk,
+      hotwordBias: hotwordBias
     )
   }
 

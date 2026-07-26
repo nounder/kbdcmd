@@ -1,7 +1,10 @@
-.PHONY: build build-cli install setup clean reset-permissions
+.PHONY: build build-cli install setup clean reset-permissions signing-cert
 
 build:
 	./bundle.sh
+
+signing-cert:
+	./make-signing-cert.sh
 
 build-cli:
 	swift build -c release --product kbdcmd

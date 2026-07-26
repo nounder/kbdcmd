@@ -1,6 +1,60 @@
 @preconcurrency import CoreML
 import Foundation
 
+struct TdtHotwordBias: Sendable {
+  let tokenSequences: [[Int]]
+  let boost: Float
+
+  func selectToken(
+    defaultToken: Int,
+    history: [Int],
+    candidateIDs: MLMultiArray?,
+    candidateLogits: MLMultiArray?
+  ) -> Int {
+    guard boost > 0,
+      !tokenSequences.isEmpty,
+      let candidateIDs,
+      let candidateLogits,
+      candidateIDs.count == candidateLogits.count
+    else { return defaultToken }
+
+    var selectedToken = defaultToken
+    var selectedScore = -Float.greatestFiniteMagnitude
+
+    for index in 0..<candidateIDs.count {
+      let token = candidateIDs[index].intValue
+      var score = candidateLogits[index].floatValue
+      if token != ParakeetConstants.blankId && advancesHotword(history: history, token: token) {
+        score += boost
+      }
+      if score > selectedScore {
+        selectedScore = score
+        selectedToken = token
+      }
+    }
+    return selectedToken
+  }
+
+  // A candidate receives a bonus when appending it makes the output suffix a
+  // non-empty prefix of any configured phrase. Full phrases count too.
+  private func advancesHotword(history: [Int], token: Int) -> Bool {
+    for phrase in tokenSequences {
+      let maximumPrefix = min(phrase.count, history.count + 1)
+      guard maximumPrefix > 0 else { continue }
+      for prefixLength in stride(from: maximumPrefix, through: 1, by: -1) {
+        guard phrase[prefixLength - 1] == token else { continue }
+        let historyLength = prefixLength - 1
+        if historyLength == 0
+          || history.suffix(historyLength).elementsEqual(phrase.prefix(historyLength))
+        {
+          return true
+        }
+      }
+    }
+    return false
+  }
+}
+
 struct TdtHypothesis {
   var ySequence: [Int] = []
   var decState: TdtDecoderState?
@@ -45,7 +99,8 @@ struct TdtDecoder {
     decoderModel: MLModel,
     jointModel: MLModel,
     decoderState: inout TdtDecoderState,
-    isLastChunk: Bool
+    isLastChunk: Bool,
+    hotwordBias: TdtHotwordBias? = nil
   ) throws -> TdtHypothesis {
     guard encoderSequenceLength > 1 else {
       return TdtHypothesis(decState: decoderState)
@@ -140,7 +195,9 @@ struct TdtDecoder {
         model: jointModel,
         inputProvider: jointInput,
         encoderDestPtr: encoderDestPtr,
-        encoderDestStride: encoderDestStride
+        encoderDestStride: encoderDestStride,
+        hotwordBias: hotwordBias,
+        history: hypothesis.ySequence
       )
 
       label = decision.token
@@ -174,7 +231,9 @@ struct TdtDecoder {
           model: jointModel,
           inputProvider: jointInput,
           encoderDestPtr: encoderDestPtr,
-          encoderDestStride: encoderDestStride
+          encoderDestStride: encoderDestStride,
+          hotwordBias: hotwordBias,
+          history: hypothesis.ySequence
         )
 
         label = decision.token
@@ -241,7 +300,8 @@ struct TdtDecoder {
         jointInput: jointInput,
         decoderStep: decoderStep,
         encoderDestPtr: encoderDestPtr,
-        encoderDestStride: encoderDestStride
+        encoderDestStride: encoderDestStride,
+        hotwordBias: hotwordBias
       )
       decoderState.finalizeLastChunk()
     }
@@ -275,7 +335,8 @@ struct TdtDecoder {
     jointInput: MLFeatureProvider,
     decoderStep: MLMultiArray,
     encoderDestPtr: UnsafeMutablePointer<Float>,
-    encoderDestStride: Int
+    encoderDestStride: Int,
+    hotwordBias: TdtHotwordBias?
   ) throws {
     var additionalSteps = 0
     var consecutiveBlanks = 0
@@ -320,7 +381,9 @@ struct TdtDecoder {
         model: jointModel,
         inputProvider: jointInput,
         encoderDestPtr: encoderDestPtr,
-        encoderDestStride: encoderDestStride
+        encoderDestStride: encoderDestStride,
+        hotwordBias: hotwordBias,
+        history: hypothesis.ySequence
       )
       let duration = try mapDurationBin(decision.durationBin)
 
@@ -380,7 +443,9 @@ struct TdtDecoder {
     model: MLModel,
     inputProvider: MLFeatureProvider,
     encoderDestPtr: UnsafeMutablePointer<Float>,
-    encoderDestStride: Int
+    encoderDestStride: Int,
+    hotwordBias: TdtHotwordBias?,
+    history: [Int]
   ) throws -> JointDecision {
     try encoderFrames.copyFrame(
       at: timeIndex, into: encoderDestPtr, destinationStride: encoderDestStride)
@@ -393,7 +458,13 @@ struct TdtDecoder {
       throw DictationError.processingFailed("Joint decision returned unexpected tensor shapes")
     }
 
-    let token = Int(tokenArray.dataPointer.bindMemory(to: Int32.self, capacity: 1)[0])
+    let defaultToken = Int(tokenArray.dataPointer.bindMemory(to: Int32.self, capacity: 1)[0])
+    let token = hotwordBias?.selectToken(
+      defaultToken: defaultToken,
+      history: history,
+      candidateIDs: output.featureValue(for: "top_k_ids")?.multiArrayValue,
+      candidateLogits: output.featureValue(for: "top_k_logits")?.multiArrayValue
+    ) ?? defaultToken
     let durationBin = Int(durationArray.dataPointer.bindMemory(to: Int32.self, capacity: 1)[0])
     return JointDecision(token: token, durationBin: durationBin)
   }

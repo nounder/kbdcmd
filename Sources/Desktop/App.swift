@@ -178,16 +178,42 @@ struct KbdcmdApp: App {
   @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
 
   var body: some Scene {
+    MenuBarExtra("Kbdcmd", systemImage: "keyboard") {
+      Text("Kbdcmd v0.2.0")
+      Divider()
+      Text("Status: Running")
+      Divider()
+      SettingsLink {
+        Text("Settings…")
+      }
+      .keyboardShortcut(",")
+      Divider()
+      Button("Restart") { restartApplication() }
+        .keyboardShortcut("r")
+      Divider()
+      Button("Quit") { NSApplication.shared.terminate(nil) }
+        .keyboardShortcut("q")
+    }
+
     Settings {
       SettingsView()
+    }
+  }
+
+  private func restartApplication() {
+    guard let executablePath = Bundle.main.executablePath else { return }
+    let task = Process()
+    task.executableURL = URL(fileURLWithPath: executablePath)
+    do {
+      try task.run()
+      NSApplication.shared.terminate(nil)
+    } catch {
+      NSLog("Unable to restart Kbdcmd: \(error.localizedDescription)")
     }
   }
 }
 
 class AppDelegate: NSObject, NSApplicationDelegate {
-  private var statusItem: NSStatusItem!
-  private var menu: NSMenu!
-  private var settingsWindow: NSWindow?
   private var permissionWindow: NSWindow?
   private var permissionTimer: Timer?
   private var permissionGranted = false
@@ -208,8 +234,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
       return
     }
 
-    setupMenuBar()
     startDaemon()
+  }
+
+  func applicationWillTerminate(_ notification: Notification) {
+    DictationController.shared.deactivate()
   }
 
   private func terminatePreviousInstances() {
@@ -325,62 +354,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
   }
 
-  private func setupMenuBar() {
-    statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-
-    if let button = statusItem.button {
-      button.image = NSImage(systemSymbolName: "keyboard", accessibilityDescription: "Kbdcmd")
-    }
-
-    menu = NSMenu()
-
-    menu.addItem(NSMenuItem(title: "Kbdcmd v0.2.0", action: nil, keyEquivalent: ""))
-    menu.addItem(NSMenuItem.separator())
-    menu.addItem(NSMenuItem(title: "Status: Running", action: nil, keyEquivalent: ""))
-    menu.addItem(NSMenuItem.separator())
-    menu.addItem(
-      NSMenuItem(title: "Settings...", action: #selector(openSettings), keyEquivalent: ","))
-    menu.addItem(NSMenuItem.separator())
-    menu.addItem(NSMenuItem(title: "Restart", action: #selector(restart), keyEquivalent: "r"))
-    menu.addItem(NSMenuItem.separator())
-    menu.addItem(NSMenuItem(title: "Quit", action: #selector(quit), keyEquivalent: "q"))
-
-    statusItem.menu = menu
-  }
-
   private func startDaemon() {
     DaemonRuntime.start()
     print("✓ Kbdcmd daemon started - listening for keyboard shortcuts!")
-  }
-
-  @objc private func openSettings() {
-    if settingsWindow == nil {
-      let window = NSWindow(
-        contentRect: NSRect(x: 0, y: 0, width: 450, height: 150),
-        styleMask: [.titled, .closable],
-        backing: .buffered,
-        defer: false
-      )
-      window.title = "Kbdcmd Settings"
-      window.contentView = NSHostingView(rootView: SettingsView())
-      window.center()
-      window.isReleasedWhenClosed = false
-      settingsWindow = window
-    }
-
-    NSApp.activate(ignoringOtherApps: true)
-    settingsWindow?.makeKeyAndOrderFront(nil)
-  }
-
-  @objc private func restart() {
-    NSApplication.shared.terminate(nil)
-    let task = Process()
-    task.launchPath = Bundle.main.executablePath
-    task.launch()
-  }
-
-  @objc private func quit() {
-    NSApplication.shared.terminate(nil)
   }
 
   private func showAccessibilityAlert() {
@@ -448,7 +424,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.4) { [weak self] in
           self?.permissionWindow?.close()
           self?.permissionWindow = nil
-          self?.setupMenuBar()
           self?.startDaemon()
         }
       }

@@ -20,9 +20,15 @@ public final class DictationController {
   private var maxSessionTimer: DispatchWorkItem?
   private var transcribeTask: Task<Void, Never>?
   private var previewTask: Task<Void, Never>?
+  private var startCueGeneration = 0
+  private var isStartCuePlaying = false
+  // Bumped per session so a cancelled preview loop that is already awaiting a
+  // transcription cannot write its stale text into the next session's overlay.
+  private var previewGeneration = 0
 
   private let capture = AudioCapture()
   private let overlay = DictationOverlayController.shared
+  private let systemAudioMuter = SystemAudioMuter.shared
 
   private init() {
     capture.onLevel = { [weak self] level in
@@ -48,6 +54,23 @@ public final class DictationController {
         try? await ParakeetTranscriber.shared.warmUp()
       }
     }
+  }
+
+  /// Stops any active session and restores system audio during app shutdown.
+  public func deactivate() {
+    holdTimer?.cancel()
+    tapTimer?.cancel()
+    maxSessionTimer?.cancel()
+    previewTask?.cancel()
+    transcribeTask?.cancel()
+    if capture.isRunning {
+      capture.stop()
+    }
+    invalidateStartCue()
+    systemAudioMuter.restore()
+    overlay.hide()
+    fnWasDown = false
+    machine = FnStateMachine(config: machine.config)
   }
 
   public func handleFnFlagChange(isDown: Bool) -> Bool {
@@ -94,11 +117,27 @@ public final class DictationController {
       if capture.isRunning {
         capture.stop()
       }
+      invalidateStartCue()
+      systemAudioMuter.restore()
+    case .playStartCue:
+      playStartCueThenMute()
     case .showHoldOverlay:
-      overlay.show(expanded: false)
+      if !isStartCuePlaying {
+        _ = muteSystemAudioForListening()
+      }
+      overlay.show()
+      if capture.isRunning {
+        capture.resetBuffer()
+      }
+      startPreviewLoop()
     case .showToggleOverlay:
-      overlay.show(expanded: true)
+      if !isStartCuePlaying {
+        _ = muteSystemAudioForListening()
+      }
+      overlay.show()
     case .hideOverlay:
+      invalidateStartCue()
+      systemAudioMuter.restore()
       overlay.hide()
     case .armHoldTimer(let delay):
       holdTimer = arm(replacing: holdTimer, delay: delay, event: .holdTimerFired)
@@ -125,6 +164,8 @@ public final class DictationController {
       previewTask?.cancel()
       previewTask = nil
       capture.stop()
+      invalidateStartCue()
+      systemAudioMuter.restore()
       overlay.hide()
     }
   }
@@ -143,7 +184,6 @@ public final class DictationController {
   private func startCaptureIfPermitted() {
     switch MicPermission.status {
     case .granted:
-      DictationFeedbackSound.shared.playStart()
       capture.start()
     case .undetermined:
       MicPermission.request { [weak self] granted in
@@ -190,11 +230,36 @@ public final class DictationController {
   private func finishSession(toggle: Bool) {
     previewTask?.cancel()
     previewTask = nil
+    invalidateStartCue()
     overlay.setPhase(.transcribing)
     capture.stop { [weak self] samples in
+      guard let self else { return }
+      self.systemAudioMuter.restore()
       DictationFeedbackSound.shared.playStop()
-      self?.transcribe(samples, toggle: toggle)
+      self.transcribe(samples, toggle: toggle)
     }
+  }
+
+  private func playStartCueThenMute() {
+    startCueGeneration &+= 1
+    let generation = startCueGeneration
+    isStartCuePlaying = true
+    DictationFeedbackSound.shared.playStart { [weak self] in
+      guard let self, self.startCueGeneration == generation else { return }
+      self.isStartCuePlaying = false
+      guard self.isPreviewableState else { return }
+      _ = self.muteSystemAudioForListening()
+    }
+  }
+
+  private func invalidateStartCue() {
+    startCueGeneration &+= 1
+    isStartCuePlaying = false
+  }
+
+  private func muteSystemAudioForListening() -> Bool {
+    guard DictationSettings.muteSystemAudioWhileListening else { return false }
+    return systemAudioMuter.mute()
   }
 
   private func transcribe(_ samples: [Float], toggle: Bool) {
@@ -216,7 +281,7 @@ public final class DictationController {
             self.overlay.hide()
           } else {
             TextInserter.insert(text)
-            self.overlay.flashSuccessAndHide()
+            self.overlay.hide()
           }
           self.dispatch(.sessionCompleted)
         }
@@ -249,8 +314,18 @@ public final class DictationController {
     try await ParakeetTranscriber.shared.prepare(precision: precision)
   }
 
+  private var isPreviewableState: Bool {
+    switch machine.state {
+    case .holdRecording, .toggleActive: return true
+    default: return false
+    }
+  }
+
   private func startPreviewLoop() {
     previewTask?.cancel()
+    previewTask = nil
+    let generation = previewGeneration &+ 1
+    previewGeneration = generation
     previewTask = Task { [weak self] in
       guard let self else { return }
       do {
@@ -260,14 +335,15 @@ public final class DictationController {
       }
       await ParakeetTranscriber.shared.beginPreviewSession()
       while !Task.isCancelled {
-        try? await Task.sleep(nanoseconds: 1_000_000_000)
-        guard case .toggleActive = self.machine.state else { return }
+        guard self.previewGeneration == generation else { return }
+        try? await Task.sleep(nanoseconds: 400_000_000)
+        guard self.isPreviewableState else { return }
         let samples = self.capture.snapshot()
         guard
           let update = try? await ParakeetTranscriber.shared.previewUpdate(samples: samples)
         else { continue }
         await MainActor.run {
-          guard case .toggleActive = self.machine.state else { return }
+          guard self.isPreviewableState, self.previewGeneration == generation else { return }
           self.overlay.model.committedText = update.committed
           self.overlay.model.volatileText = update.volatile
         }
@@ -287,6 +363,8 @@ public final class DictationController {
     if capture.isRunning {
       capture.stop()
     }
+    invalidateStartCue()
+    systemAudioMuter.restore()
     overlay.showErrorAndHide(message)
     machine = FnStateMachine(config: machine.config)
   }
