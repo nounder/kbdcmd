@@ -43,6 +43,11 @@ public enum DictationSettings {
     set { defaults.set(newValue.rawValue, forKey: "dictation.encoderPrecision") }
   }
 
+  public static var inverseTextNormalization: Bool {
+    get { defaults.object(forKey: "dictation.inverseTextNormalization") as? Bool ?? true }
+    set { defaults.set(newValue, forKey: "dictation.inverseTextNormalization") }
+  }
+
   public static var hotwords: [String] {
     get { defaults.stringArray(forKey: "dictation.hotwords") ?? [] }
     set { defaults.set(newValue, forKey: "dictation.hotwords") }

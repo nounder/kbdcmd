@@ -24,6 +24,12 @@ class SettingsStore: ObservableObject {
     }
   }
 
+  @Published var inverseTextNormalization: Bool {
+    didSet {
+      DictationSettings.inverseTextNormalization = inverseTextNormalization
+    }
+  }
+
   @Published var hotwordsText: String {
     didSet {
       DictationSettings.hotwords = Self.parseHotwords(hotwordsText)
@@ -43,6 +49,7 @@ class SettingsStore: ObservableObject {
     self.includeOtherSpacesWindows = UserDefaults.standard.bool(forKey: "includeOtherSpacesWindows")
     self.dictationEnabled = DictationSettings.enabled
     self.muteSystemAudioWhileListening = DictationSettings.muteSystemAudioWhileListening
+    self.inverseTextNormalization = DictationSettings.inverseTextNormalization
     self.hotwordsText = DictationSettings.hotwords.joined(separator: "\n")
     self.hotwordBoost = DictationSettings.hotwordBoost
   }
@@ -84,6 +91,13 @@ struct SettingsView: View {
           "Mute system audio while listening",
           isOn: $settings.muteSystemAudioWhileListening
         )
+        .disabled(!settings.dictationEnabled)
+        VStack(alignment: .leading, spacing: 2) {
+          Toggle("Format numbers, dates, and times", isOn: $settings.inverseTextNormalization)
+          Text("\"ten thirty a m\" becomes \"10:30 AM\"")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        }
         .disabled(!settings.dictationEnabled)
         LabeledContent("Model") {
           modelRow

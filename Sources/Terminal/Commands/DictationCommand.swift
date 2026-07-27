@@ -7,8 +7,34 @@ struct DictationCommand: AsyncParsableCommand {
   static let configuration = CommandConfiguration(
     commandName: "dictation",
     abstract: "Local speech-to-text with the Parakeet model",
-    subcommands: [Download.self, Status.self, Transcribe.self]
+    subcommands: [Download.self, Status.self, Transcribe.self, Normalize.self]
   )
+
+  struct Normalize: ParsableCommand {
+    static let configuration = CommandConfiguration(
+      abstract: "Apply inverse text normalization to spoken-form text")
+
+    @Argument(help: "Spoken-form text; reads stdin when omitted")
+    var text: [String] = []
+
+    func run() throws {
+      let input =
+        text.isEmpty
+        ? (readLines() ?? "")
+        : text.joined(separator: " ")
+      for line in input.split(separator: "\n", omittingEmptySubsequences: false) {
+        print(InverseTextNormalizer.normalize(String(line)))
+      }
+    }
+
+    private func readLines() -> String? {
+      var buffer = ""
+      while let line = readLine(strippingNewline: false) {
+        buffer += line
+      }
+      return buffer.isEmpty ? nil : buffer
+    }
+  }
 
   struct Download: AsyncParsableCommand {
     static let configuration = CommandConfiguration(

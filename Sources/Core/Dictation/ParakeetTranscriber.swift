@@ -103,7 +103,12 @@ public actor ParakeetTranscriber {
       start = end
     }
 
-    return pieces.joined(separator: " ")
+    return Self.normalized(pieces.joined(separator: " "))
+  }
+
+  static func normalized(_ text: String) -> String {
+    guard DictationSettings.inverseTextNormalization else { return text }
+    return InverseTextNormalizer.normalize(text)
   }
 
   public struct PreviewUpdate: Sendable {
@@ -160,7 +165,7 @@ public actor ParakeetTranscriber {
       throw DictationError.modelsMissing("transcriber not prepared")
     }
     let tail = Array(samples[min(previewBoundary, samples.count)...])
-    var pieces = previewPieces
+    var pieces = previewPieces.map { Self.normalized($0) }
     previewPieces = []
     previewBoundary = 0
     if tail.count >= ParakeetConstants.minimumSamples {
