@@ -34,8 +34,8 @@ struct KeybindingAssignmentView: View {
   let onKeyPress: (Character) -> Void
   let onDismiss: () -> Void
 
-  @State private var pressedKey: String = ""
-  @State private var eventMonitor: Any?
+  @ViewState private var pressedKey: String = ""
+  @ViewState private var eventMonitor: Any?
 
   var body: some View {
     ZStack {

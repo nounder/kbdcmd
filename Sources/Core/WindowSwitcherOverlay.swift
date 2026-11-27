@@ -7,8 +7,8 @@ import SwiftUI
 struct WindowSwitcherView: View {
   @ObservedObject var publisher: WindowChangePublisher
   let onDismiss: () -> Void
-  @State private var hoveredAppName: String?
-  @State private var hoveredWindowId: CGWindowID?
+  @ViewState private var hoveredAppName: String?
+  @ViewState private var hoveredWindowId: CGWindowID?
 
   var body: some View {
     ScrollView {
