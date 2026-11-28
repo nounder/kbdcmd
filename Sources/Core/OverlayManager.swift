@@ -317,7 +317,7 @@ public class OverlayManager {
     }
 
     private func clickElement(_ element: ClickableElement) {
-        let success = AXInterface.clickElement(element)
+        _ = AXInterface.clickElement(element)
         // Always dismiss the overlay after attempting to click, even if the action fails
         // This ensures consistent behavior for both AXPress and AXOpen actions
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in

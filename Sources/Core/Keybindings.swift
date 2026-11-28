@@ -632,7 +632,7 @@ public class Keybindings {
       switch action {
       case .appActivation(let appPath):
         return KeybindingItem(letter: String(letter), appPath: appPath, windowId: nil)
-      case .windowActivation(let windowId, let appPath, let includeMinimized):
+      case .windowActivation(let windowId, let appPath, _):
         return KeybindingItem(letter: String(letter), appPath: appPath, windowId: windowId)
       }
     }.sorted { $0.letter < $1.letter }

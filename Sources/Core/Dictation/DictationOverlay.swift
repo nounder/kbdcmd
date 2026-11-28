@@ -112,7 +112,7 @@ final class DictationOverlayController: @unchecked Sendable {
 
 struct DictationOverlayView: View {
   @ObservedObject var model: DictationOverlayModel
-  @State private var textHeight: CGFloat = 0
+  @ViewState private var textHeight: CGFloat = 0
 
   var body: some View {
     VStack {
